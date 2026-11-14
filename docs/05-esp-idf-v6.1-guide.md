@@ -33,13 +33,14 @@ In ESP-IDF `^6.1`, the legacy umbrella `driver` component no longer implicitly e
 | **PSRAM Allocation** | `esp_psram` | `esp_psram.h`, `esp_heap_caps.h` |
 
 ### 1.3 Managed Components (`main/idf_component.yml`)
-In ESP-IDF `^6.1`, `cJSON` and `led_strip` are distributed via the IDF Component Registry (`idf_component.yml`):
+In ESP-IDF `^6.1`, `cJSON`, `led_strip`, and `mqtt` (`esp-mqtt`) are distributed via the IDF Component Registry (`idf_component.yml`):
 ```yaml
 dependencies:
   idf:
-    version: "^6.1.0"
-  espressif/cjson: "^1.7.18"
+    version: ">=5.3.0"
+  espressif/cjson: "*"
   espressif/led_strip: "^3.0.0"
+  espressif/mqtt: "*"
 ```
 
 ### 1.4 Picolibc & Strict `-Werror` Enforcement

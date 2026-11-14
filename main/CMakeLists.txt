@@ -26,6 +26,5 @@ idf_component_register(
         esp_event
         esp_netif
         bt
-        mqtt
         nvs_flash
 )

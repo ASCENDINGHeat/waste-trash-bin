@@ -21,6 +21,7 @@ jobs:
       - name: Configure and Build ESP-IDF Firmware
         shell: bash
         run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           . /opt/esp/idf/export.sh
           idf.py --version
           idf.py set-target esp32s3
