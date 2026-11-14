@@ -118,7 +118,12 @@ static void format_telemetry_json(const smartbin_telemetry_t *t, char *out_buf, 
     cJSON_AddNumberToObject(root, "wifi_rssi", t->wifi_rssi);
     cJSON_AddNumberToObject(root, "uptime_s", t->uptime_s);
 
-    cJSON_PrintPreallocated(root, out_buf, (int)out_len - 1, false);
+    char *printed = cJSON_PrintUnformatted(root);
+    if (printed != NULL) {
+        strncpy(out_buf, printed, out_len - 1);
+        out_buf[out_len - 1] = '\0';
+        cJSON_free(printed);
+    }
     cJSON_Delete(root);
 }
 

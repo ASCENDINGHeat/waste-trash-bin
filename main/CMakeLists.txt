@@ -11,6 +11,7 @@ idf_component_register(
         "trash_bin_fsm.c"
     INCLUDE_DIRS "."
     PRIV_REQUIRES
+        driver
         esp_driver_gpio
         esp_driver_ledc
         esp_driver_i2c
