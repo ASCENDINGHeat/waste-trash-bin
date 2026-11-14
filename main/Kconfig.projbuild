@@ -1,0 +1,5 @@
+menu "Project Configuration"
+
+    # Add custom Kconfig options here
+
+endmenu
