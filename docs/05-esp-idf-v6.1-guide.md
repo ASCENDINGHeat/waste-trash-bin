@@ -1,0 +1,104 @@
+# 05 — ESP-IDF `^6.1` Build System, Drivers & Environment Guide
+
+> [!IMPORTANT]
+> This project targets **ESP-IDF `^6.1`** (`v6.1.x`). ESP-IDF v6.x introduces major architectural changes compared to v5.x, including CMake $\ge 3.22.1$, modularized `esp_driver_*` components, Picolibc as the default C library, and extracted managed components.
+
+---
+
+## 1. Key ESP-IDF `^6.1` Requirements & Breaking Changes
+
+### 1.1 Minimum CMake Version (`3.22.1`)
+Root `CMakeLists.txt` must specify at least CMake `3.22.1`:
+```cmake
+cmake_minimum_required(VERSION 3.22.1)
+include($ENV{IDF_PATH}/tools/cmake/project.cmake)
+project(esp_idf_project)
+```
+
+### 1.2 Granular Peripheral Driver Components (`esp_driver_*`)
+In ESP-IDF `^6.1`, the legacy umbrella `driver` component no longer implicitly exports all peripheral headers. Components must explicitly declare each required driver in `main/CMakeLists.txt`:
+
+| Peripheral / Subsystem | Required ESP-IDF `^6.1` Component | Header File |
+| :--- | :--- | :--- |
+| **PIR (`GPIO 2`) & Ultrasonic (`GPIO 5, 18`)** | `esp_driver_gpio` | `driver/gpio.h` |
+| **SG90 Servo PWM (`GPIO 21`)** | `esp_driver_ledc` | `driver/ledc.h` |
+| **OLED Display I2C (`GPIO 6, 7`)** | `esp_driver_i2c` *(new master API)* | `driver/i2c_master.h` |
+| **WS2812 RGB (`GPIO 48`) / RMT** | `esp_driver_rmt` | `driver/rmt_tx.h`, `driver/rmt_rx.h` |
+| **High-Resolution Microsecond Timer** | `esp_timer` | `esp_timer.h` |
+| **Power Management & Sleep** | `esp_pm`, `esp_hw_support` | `esp_pm.h`, `esp_sleep.h`, `driver/rtc_io.h` |
+| **Wi-Fi, Event Loop & Netif** | `esp_wifi`, `esp_event`, `esp_netif` | `esp_wifi.h`, `esp_event.h`, `esp_netif.h` |
+| **BLE (`NimBLE`)** | `bt` | `nimble/nimble_port.h`, `host/ble_hs.h` |
+| **MQTT Client** | `mqtt` | `mqtt_client.h` |
+| **Non-Volatile Storage** | `nvs_flash` | `nvs_flash.h`, `nvs.h` |
+| **PSRAM Allocation** | `esp_psram` | `esp_psram.h`, `esp_heap_caps.h` |
+
+### 1.3 Managed Components (`main/idf_component.yml`)
+In ESP-IDF `^6.1`, `cJSON` and `led_strip` are distributed via the IDF Component Registry (`idf_component.yml`):
+```yaml
+dependencies:
+  idf:
+    version: "^6.1.0"
+  espressif/cjson: "^1.7.18"
+  espressif/led_strip: "^3.0.0"
+```
+
+### 1.4 Picolibc & Strict `-Werror` Enforcement
+- **Picolibc**: Default standard C library in ESP-IDF v6.x (replaces Newlib for smaller flash/RAM footprint). Avoid Newlib-specific `_reent` internals.
+- **`-Werror` by Default**: Unused variables, implicit conversions, or format-string mismatches (`PRIu32` vs `%d`) will fail compilation. Always use `<inttypes.h>` macros (`PRIu32`, `PRId64`) in `ESP_LOG*` calls.
+
+---
+
+## 2. Project Directory Structure
+
+```text
+esp-idf-project/
+├── CMakeLists.txt                       # Root CMake (requires >= 3.22.1)
+├── sdkconfig.defaults                   # ESP32-S3 N16R8 + NimBLE + Power Management defaults
+├── README.md                            # Quick-start overview and links to docs/
+├── docs/                                # Complete project documentation folder
+│   ├── README.md                        # Documentation index
+│   ├── 01-hardware-and-pinout.md        # YD-ESP32-23 N16R8 specs, jumpers, pin mapping
+│   ├── 02-functional-specification.md   # Dual-core architecture, Trash Bin FSM, OLED GIF engine
+│   ├── 03-connectivity-ble-and-mqtt.md  # NimBLE provisioning/failover, GATT, MQTT telemetry
+│   ├── 04-power-management-and-battery.md # 1000 mAh battery analysis & sleep modes
+│   └── 05-esp-idf-v6.1-guide.md         # ESP-IDF ^6.1 migration, drivers, and Git workflow
+└── main/
+    ├── CMakeLists.txt                   # Explicit esp_driver_* component registration
+    ├── idf_component.yml                # IDF Component Manager manifest (^6.1.0)
+    ├── Kconfig.projbuild                # Custom menuconfig parameters (pins, angles, intervals)
+    └── main.c                           # Application entry point (app_main)
+```
+
+---
+
+## 3. Build, Flash & Monitor Commands (`ESP-IDF ^6.1`)
+
+```bash
+# Set target to ESP32-S3 (applies sdkconfig.defaults automatically)
+idf.py set-target esp32s3
+
+# Optional: customize pins, intervals, or power profile in menuconfig
+idf.py menuconfig
+
+# Build firmware
+idf.py build
+
+# Flash via CH343P UART port (COM Type-C) or Native USB port and open serial monitor
+idf.py -p /dev/ttyACM0 flash monitor
+```
+
+---
+
+## 4. Git & SSH Remote Reference (Device Environment)
+
+- **Repository Location**: `/storage/emulated/0/projects/esp-idf-project`
+- **Remote (`origin`)**: `git@github.com:ASCENDINGHeat/esp-trash-bin.git`
+- **Git Identity**: `ASCENDINGHeat <alfina.jauhar@gmail.com>` (no AI contributor or `Co-authored-by` metadata)
+- **SSH Wrapper**: `/data/user/0/com.agy/files/usr/bin/agy-ssh` (uses `/data/user/0/com.agy/files/.ssh/config` and `/data/user/0/com.agy/files/.ssh/id_ed25519`)
+- **Push Command**:
+  ```bash
+  export PATH="/data/user/0/com.agy/files/usr/bin:$PATH"
+  export HOME="/data/user/0/com.agy/files"
+  export GIT_CONFIG_NOSYSTEM=1
+  git -C "/storage/emulated/0/projects/esp-idf-project" push origin main
+  ```
