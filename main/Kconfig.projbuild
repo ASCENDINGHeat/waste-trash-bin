@@ -103,7 +103,7 @@ menu "Smart Trash Bin Configuration (YD-ESP32-23 N16R8)"
         config SMARTBIN_OLED_FPS
             int "OLED Dancing Cat Animation Frame Rate (FPS)"
             range 5 40
-            default 20
+            default 15
 
         config SMARTBIN_OLED_SLEEP_TIMEOUT_SEC
             int "OLED Battery-Saver Sleep Timeout After Motion (0 = Always On)"

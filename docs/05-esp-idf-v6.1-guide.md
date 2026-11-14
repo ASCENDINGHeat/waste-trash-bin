@@ -81,20 +81,43 @@ esp-idf-project/
 
 ---
 
-## 3. Build, Flash & Monitor Commands (`ESP-IDF ^6.1`)
+## 3. Flashing the Compiled Firmware (`YD-ESP32-23` / `ESP32-S3 N16R8`)
 
+### 3.1 Download Artifact from GitHub Actions
+1. Open **[GitHub Actions](https://github.com/ASCENDINGHeat/esp-trash-bin/actions)** $\rightarrow$ select the latest successful workflow run.
+2. Scroll to **Artifacts** and download **`esp32s3-trash-bin-firmware.zip`**.
+3. Extract the zip. It contains:
+   - **`esp_trash_bin_merged.bin`** — All-in-one merged image (Bootloader + Partition Table + Application). Flash at offset **`0x0`**.
+   - Individual binaries (if flashing separately):
+     - `bootloader.bin` $\rightarrow$ **`0x0`**
+     - `partition-table.bin` $\rightarrow$ **`0x8000`**
+     - `esp_trash_bin.bin` $\rightarrow$ **`0x10000`**
+
+### 3.2 Entering Download Mode on `YD-ESP32-23`
+- **Via `COM` (`UART`) USB-C Port (`CH343P`)**: Supports automatic bootloader entry via `DTR`/`RTS`.
+- **Via `USB` (Native `ESP32-S3`) USB-C Port** (or if auto-reset does not trigger):
+  1. Hold down the **`BOOT`** button.
+  2. Press and release the **`RST`** button.
+  3. Release the **`BOOT`** button.
+
+### 3.3 Option A — Flash via Browser (No Software Install, Chrome / Edge)
+1. Open **[Espressif ESPTool-JS Web Flasher](https://espressif.github.io/esptool-js/)**.
+2. Connect the `YD-ESP32-23` via USB-C and click **Connect** (baudrate `460800` or `115200`).
+3. Set **Flash Address** to **`0x0`** and select **`esp_trash_bin_merged.bin`**.
+4. Click **Program**, then press **`RST`** on the board when finished.
+
+### 3.4 Option B — Flash from Android Phone via USB-C OTG Cable
+1. Connect your phone to the `YD-ESP32-23` (`USB` or `COM` port) using a USB-C to USB-C OTG cable and put the board into Download Mode (`Hold BOOT -> Tap RST -> Release BOOT`).
+2. Use an Android ESP flasher app such as **ESPLoader** or **ZFlasher AVR/ESP**:
+   - Chip: **`ESP32-S3`**
+   - File: **`esp_trash_bin_merged.bin`**
+   - Address / Offset: **`0x0`** (`0x00000000`)
+3. Tap **Flash**, then press the **`RST`** button on the board.
+
+### 3.5 Option C — Command Line (`esptool.py` on PC / Mac / Linux)
 ```bash
-# Set target to ESP32-S3 (applies sdkconfig.defaults automatically)
-idf.py set-target esp32s3
-
-# Optional: customize pins, intervals, or power profile in menuconfig
-idf.py menuconfig
-
-# Build firmware
-idf.py build
-
-# Flash via CH343P UART port (COM Type-C) or Native USB port and open serial monitor
-idf.py -p /dev/ttyACM0 flash monitor
+# Flash the single merged image at 0x0:
+esptool.py --chip esp32s3 --port /dev/ttyACM0 --baud 460800 write_flash 0x0 esp_trash_bin_merged.bin
 ```
 
 ---
