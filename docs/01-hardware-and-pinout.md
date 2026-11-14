@@ -53,8 +53,8 @@
 | **Ultrasonic (`HC-SR04`)** | Trash Level Trigger | `TRIG` | **`GPIO 5`** | Digital Output ($10\text{ }\mu\text{s}$ pulse) | `esp_driver_gpio` / `esp_driver_rmt` |
 | **Ultrasonic (`HC-SR04`)** | Trash Level Echo | `ECHO` | **`GPIO 18`** | Digital Input (Pulse width) | `esp_driver_gpio` + `esp_timer` / `esp_driver_rmt` |
 | **Micro Servo (`SG90`)** | Lid Actuator | `PWM` | **`GPIO 21`** | 50 Hz PWM Output ($500\text{–}2500\text{ }\mu\text{s}$) | `esp_driver_ledc` |
-| **I2C OLED (`SSD1306`)** | Dancing Cat GIF | `SCL` | **`GPIO 7`** | I2C Master Clock (400 kHz) | `esp_driver_i2c` (`driver/i2c_master.h`) |
-| **I2C OLED (`SSD1306`)** | Dancing Cat GIF | `SDA` | **`GPIO 6`** | I2C Master Data (400 kHz) | `esp_driver_i2c` (`driver/i2c_master.h`) |
+| **I2C OLED (`SSD1306`)** | Dancing Cat GIF | `SCL` | **`GPIO 6`** | I2C Master Clock (400 kHz) | `esp_driver_i2c` (`driver/i2c_master.h`) |
+| **I2C OLED (`SSD1306`)** | Dancing Cat GIF | `SDA` | **`GPIO 7`** | I2C Master Data (400 kHz) | `esp_driver_i2c` (`driver/i2c_master.h`) |
 | **Onboard RGB (`WS2812B`)** | Bin & BLE Status | `DIN` | **`GPIO 48`** | RMT Addressable LED | `esp_driver_rmt` + `espressif/led_strip` |
 | **5V Rail Gate (Optional)** | Battery Saver | `EN` | **`GPIO 4`** *(optional)* | Digital Output (HIGH = 5V ON) | `esp_driver_gpio` |
 

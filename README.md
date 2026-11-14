@@ -7,7 +7,7 @@ Smart trash bin firmware and independent OLED animation engine targeting the **`
 - **Event + Periodic Ultrasonic Fill Level (`HC-SR04`)**: 5-sample median-filtered distance measurement (`TRIG = GPIO 5`, `ECHO = GPIO 18`) triggered after every lid close and periodically while closed ($10\text{ cm} = 100\%$, $30\text{ cm} = 0\%$).
 - **BLE Setup & Wi-Fi Failover (`NimBLE`)**: Initial provisioning and automatic failover when Wi-Fi drops, plus live BLE GATT telemetry readout.
 - **MQTT Telemetry (`esp-mqtt`)**: Real-time fill level, alerts, offline Octal PSRAM ring buffering, and remote commands.
-- **Independent OLED Display (`Core 1`)**: Dedicated $128 \times 64$ I2C OLED (`SCL = GPIO 7`, `SDA = GPIO 6`) rendering the Chinese Dancing Cat GIF from 8 MB Octal PSRAM.
+- **Independent OLED Display (`Core 1`)**: Dedicated $128 \times 64$ I2C OLED (`SCL = GPIO 6`, `SDA = GPIO 7`) rendering the Chinese Dancing Cat GIF from 8 MB Octal PSRAM.
 
 ## Documentation (`docs/`)
 All hardware, functional, connectivity, battery power, and ESP-IDF `^6.1` references are organized in [`docs/`](./docs/README.md):

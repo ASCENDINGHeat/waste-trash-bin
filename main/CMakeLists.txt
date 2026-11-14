@@ -1,5 +1,14 @@
 idf_component_register(
-    SRCS "main.c"
+    SRCS
+        "main.c"
+        "app_config.c"
+        "power_mgr.c"
+        "servo_sg90.c"
+        "ultrasonic_hcsr04.c"
+        "rgb_status.c"
+        "oled_dancing_cat.c"
+        "net_ble_mqtt.c"
+        "trash_bin_fsm.c"
     INCLUDE_DIRS "."
     PRIV_REQUIRES
         esp_driver_gpio
@@ -10,6 +19,8 @@ idf_component_register(
         esp_pm
         esp_hw_support
         esp_psram
+        esp_mm
+        esp_rom
         esp_wifi
         esp_event
         esp_netif

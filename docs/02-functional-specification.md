@@ -18,7 +18,7 @@ flowchart TD
 
     subgraph Core1["Core 1: Independent OLED Animation Engine"]
         PSRAM["Dancing Cat Frames (Flash -> 8MB Octal PSRAM)"] --> OLED_TASK["OLED Render Task (20-25 FPS)"]
-        OLED_TASK -->|400kHz I2C Master (SDA: 6, SCL: 7)| OLED["128x64 I2C OLED Display"]
+        OLED_TASK -->|400kHz I2C Master (SCL: 6, SDA: 7)| OLED["128x64 I2C OLED Display"]
     end
 ```
 
@@ -89,7 +89,7 @@ $$\text{fill\_percent} = \begin{cases} 100 & \text{if } d_{\text{cm}} \le 10.0 \
 ## 4. Independent OLED Display Engine ("Chinese Dancing Cat GIF")
 
 - **Complete Functional Isolation**:
-  - The OLED display (`SCL = GPIO 7`, `SDA = GPIO 6`) does **not** display trash bin text or wait on sensor locks. Its sole job is to render the **Chinese Dancing Cat GIF** animation smoothly.
+  - The OLED display (`SCL = GPIO 6`, `SDA = GPIO 7`) does **not** display trash bin text or wait on sensor locks. Its sole job is to render the **Chinese Dancing Cat GIF** animation smoothly.
 - **Memory & Rendering Pipeline**:
   - Each $128 \times 64$ monochrome frame occupies $128 \times 64 / 8 = 1024\text{ bytes}$ ($1\text{ KB}$) in SSD1306 page-addressed format ($8\text{ pages} \times 128\text{ columns}$).
   - With **16 MB Flash** and **8 MB Octal PSRAM**, the complete multi-frame animation array is copied into an Octal PSRAM buffer (`heap_caps_malloc(..., MALLOC_CAP_SPIRAM)`) at boot.

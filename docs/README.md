@@ -23,5 +23,5 @@ Complete technical reference for the **ESP32-S3 Smart Trash Bin + Independent OL
 - **PIR Motion Sensor (`HC-SR501`)**: `OUT -> GPIO 2` (`RTC_GPIO2`)
 - **Ultrasonic Sensor (`HC-SR04`)**: `TRIG -> GPIO 5`, `ECHO -> GPIO 18` ($10\text{ cm} = 100\%$, $30\text{ cm} = 0\%$)
 - **Micro Servo (`SG90`)**: `PWM -> GPIO 21` (50 Hz LEDC)
-- **I2C OLED (`SSD1306` / `SH1106`)**: `SCL -> GPIO 7`, `SDA -> GPIO 6` (400 kHz `esp_driver_i2c`, Core 1 Chinese Dancing Cat GIF)
+- **I2C OLED (`SSD1306` / `SH1106`)**: `SCL -> GPIO 6`, `SDA -> GPIO 7` (400 kHz `esp_driver_i2c`, Core 1 Chinese Dancing Cat GIF)
 - **Onboard Status RGB LED (`WS2812B`)**: `GPIO 48` (RMT `led_strip`)

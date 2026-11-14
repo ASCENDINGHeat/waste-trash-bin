@@ -1,5 +1,138 @@
-menu "Project Configuration"
+menu "Smart Trash Bin Configuration (YD-ESP32-23 N16R8)"
 
-    # Add custom Kconfig options here
+    menu "GPIO Pin Assignments"
+        config SMARTBIN_PIR_GPIO
+            int "HC-SR501 PIR Motion Sensor OUT GPIO (RTC-capable)"
+            default 2
+            help
+                Digital input pin connected to the HC-SR501 PIR sensor OUT pin.
+                GPIO 2 is RTC_GPIO2 on ESP32-S3, supporting ext0 Deep Sleep wakeup.
+
+        config SMARTBIN_ULTRA_TRIG_GPIO
+            int "HC-SR04 Ultrasonic TRIG GPIO"
+            default 5
+            help
+                Digital output pin connected to the HC-SR04 TRIG pin.
+
+        config SMARTBIN_ULTRA_ECHO_GPIO
+            int "HC-SR04 Ultrasonic ECHO GPIO"
+            default 18
+            help
+                Digital input pin connected to the HC-SR04 ECHO pin (via 3.3V divider if 5V).
+
+        config SMARTBIN_SERVO_GPIO
+            int "SG90 Micro Servo PWM GPIO"
+            default 21
+            help
+                PWM output pin connected to the SG90 servo signal wire (50 Hz LEDC).
+
+        config SMARTBIN_OLED_SCL_GPIO
+            int "I2C OLED Display SCL GPIO"
+            default 6
+            help
+                I2C Master clock pin for the 128x64 OLED display.
+
+        config SMARTBIN_OLED_SDA_GPIO
+            int "I2C OLED Display SDA GPIO"
+            default 7
+            help
+                I2C Master data pin for the 128x64 OLED display.
+
+        config SMARTBIN_RGB_LED_GPIO
+            int "Onboard WS2812B RGB LED GPIO"
+            default 48
+            help
+                YD-ESP32-23 onboard addressable WS2812B RGB LED pin (GPIO 48).
+
+        config SMARTBIN_POWER_5V_EN_GPIO
+            int "Optional 5V Boost Rail Gate Enable GPIO (-1 to disable)"
+            default 4
+            help
+                Optional GPIO controlling a high-side MOSFET or 5V boost converter EN pin
+                to cut idle power to SG90 and HC-SR04 during sleep. Set to -1 if unused.
+    endmenu
+
+    menu "Trash Bin Mechanics & Ultrasonic Calibration"
+        config SMARTBIN_SERVO_OPEN_ANGLE
+            int "Servo Open Lid Angle (degrees)"
+            range 30 180
+            default 90
+
+        config SMARTBIN_SERVO_CLOSED_ANGLE
+            int "Servo Normal/Closed Lid Angle (degrees)"
+            range 0 90
+            default 0
+
+        config SMARTBIN_HOLD_OPEN_SEC
+            int "Lid Hold-Open Duration After Motion Stops (seconds)"
+            range 1 30
+            default 3
+
+        config SMARTBIN_MAX_STUCK_OPEN_SEC
+            int "Maximum Stuck-Sensor Open Timeout (seconds)"
+            range 5 120
+            default 30
+
+        config SMARTBIN_FULL_DIST_CM
+            int "Ultrasonic 100% Full Distance Threshold (cm)"
+            range 2 50
+            default 10
+            help
+                Distance in cm at or below which the trash bin is considered 100% full.
+
+        config SMARTBIN_EMPTY_DIST_CM
+            int "Ultrasonic 0% Empty Distance Threshold (cm)"
+            range 15 200
+            default 30
+            help
+                Distance in cm at or above which the trash bin is considered 0% empty.
+
+        config SMARTBIN_PERIODIC_INTERVAL_SEC
+            int "Periodic Ultrasonic Firing Interval When Closed (seconds)"
+            range 30 86400
+            default 900
+            help
+                Background ultrasonic check interval in seconds (default 900s = 15 minutes).
+    endmenu
+
+    menu "OLED Animation & Power Management"
+        config SMARTBIN_OLED_I2C_ADDR
+            hex "OLED 7-bit I2C Address"
+            default 0x3C
+
+        config SMARTBIN_OLED_FPS
+            int "OLED Dancing Cat Animation Frame Rate (FPS)"
+            range 5 40
+            default 20
+
+        config SMARTBIN_OLED_SLEEP_TIMEOUT_SEC
+            int "OLED Battery-Saver Sleep Timeout After Motion (0 = Always On)"
+            range 0 3600
+            default 0
+            help
+                Set to 0 to keep the Chinese Dancing Cat GIF playing 24/7.
+                Set > 0 (e.g. 60) to turn off the OLED charge pump (0xAE) after inactivity.
+
+        config SMARTBIN_ENABLE_DEEP_SLEEP
+            bool "Enable RTC Deep Sleep Mode Between Events (Battery Saver)"
+            default n
+            help
+                When enabled, the ESP32-S3 enters Deep Sleep when idle and wakes on
+                GPIO 2 (PIR motion) or the periodic ultrasonic timer.
+    endmenu
+
+    menu "Default Network & MQTT Settings"
+        config SMARTBIN_DEFAULT_WIFI_SSID
+            string "Default Wi-Fi SSID (if not provisioned in NVS)"
+            default ""
+
+        config SMARTBIN_DEFAULT_WIFI_PASS
+            string "Default Wi-Fi Password"
+            default ""
+
+        config SMARTBIN_DEFAULT_MQTT_URI
+            string "Default MQTT Broker URI"
+            default "mqtt://broker.hivemq.com:1883"
+    endmenu
 
 endmenu

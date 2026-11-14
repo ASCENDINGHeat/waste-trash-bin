@@ -66,6 +66,15 @@ esp-idf-project/
     ├── CMakeLists.txt                   # Explicit esp_driver_* component registration
     ├── idf_component.yml                # IDF Component Manager manifest (^6.1.0)
     ├── Kconfig.projbuild                # Custom menuconfig parameters (pins, angles, intervals)
+    ├── app_config.h / app_config.c      # NVS configuration persistence & shared types
+    ├── power_mgr.h / power_mgr.c        # DFS, Light Sleep, 5V rail gate & RTC Deep Sleep
+    ├── servo_sg90.h / servo_sg90.c      # GPIO 21 50Hz LEDC driver (fast open, soft close, auto-detach)
+    ├── ultrasonic_hcsr04.h / .c         # GPIO 5/18 HC-SR04 5-sample median filter & 10-30cm mapping
+    ├── rgb_status.h / rgb_status.c      # GPIO 48 WS2812B RMT status indicator
+    ├── dancing_cat_frames.h             # 16-frame 128x64 Chinese Dancing Cat bitmap generator
+    ├── oled_dancing_cat.h / .c          # Core 1 400kHz I2C OLED animation engine (GPIO 6/7)
+    ├── net_ble_mqtt.h / net_ble_mqtt.c  # Wi-Fi STA, NimBLE GATT setup/failover, MQTT & PSRAM buffer
+    ├── trash_bin_fsm.h / .c             # Core 0 Smart Trash Bin FSM, PIR blanking & periodic timer
     └── main.c                           # Application entry point (app_main)
 ```
 
