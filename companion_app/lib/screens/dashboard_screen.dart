@@ -1,6 +1,5 @@
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
-import '../models/telemetry.dart';
 import '../services/waste_connection_service.dart';
 import 'ble_provision_sheet.dart';
 import 'calibration_sheet.dart';
