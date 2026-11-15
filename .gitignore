@@ -16,3 +16,7 @@ companion_app/.packages
 companion_app/build/
 companion_app/android/.gradle/
 companion_app/android/local.properties
+companion_app/android/key.properties
+*.jks
+*.keystore
+

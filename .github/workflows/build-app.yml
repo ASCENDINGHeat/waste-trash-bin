@@ -51,10 +51,16 @@ jobs:
 
       - name: Bootstrap Android Runner, Test & Build Release APK
         working-directory: companion_app
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           cp android/app/src/main/AndroidManifest.xml /tmp/AndroidManifest.xml
           flutter create --platforms=android --org com.ascendingheat.waste --project-name waste_companion .
           cp /tmp/AndroidManifest.xml android/app/src/main/AndroidManifest.xml
+          node scripts/configure_android_signing.mjs
           flutter pub get
           flutter analyze --no-fatal-infos --no-fatal-warnings
           flutter test
