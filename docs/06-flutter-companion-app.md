@@ -95,7 +95,7 @@ companion_app/
 ## 5. Installing & Building the Companion App (`v1.0.0`)
 
 ### Option 1 — Download Pre-Built APK from GitHub Releases (`v1.0.0`)
-1. Open the **[GitHub Releases (`v1.0.0`)](https://github.com/ASCENDINGHeat/esp-trash-bin/releases/tag/v1.0.0)** page (or the **[Build Companion App workflow](https://github.com/ASCENDINGHeat/esp-trash-bin/actions/workflows/build-app.yml)**).
+1. Open the **[GitHub Releases (`v1.0.0`)](https://github.com/ASCENDINGHeat/waste-trash-bin/releases/tag/v1.0.0)** page (or the **[Build Companion App workflow](https://github.com/ASCENDINGHeat/waste-trash-bin/actions/workflows/build-app.yml)**).
 2. Download **`waste-companion-v1.0.0.apk`** and install it on your Android device.
 
 ### Option 2 — Run Tests & Build Locally with Flutter SDK

@@ -52,7 +52,7 @@ dependencies:
 ## 2. Project Directory Structure
 
 ```text
-esp-trash-bin/
+waste-trash-bin/
 ├── CMakeLists.txt                       # Root CMake (requires >= 3.22.1)
 ├── sdkconfig.defaults                   # ESP32-S3 N16R8 + NimBLE + Power Management defaults
 ├── partitions.csv                       # Custom 16 MB Flash partition table (2 MB factory app)
@@ -92,9 +92,9 @@ esp-trash-bin/
 
 ### 3.1 Download Binary from GitHub Releases (`v1.0.0`) or Actions
 1. **From GitHub Releases (Recommended)**:
-   - Open **[Releases (`v1.0.0`)](https://github.com/ASCENDINGHeat/esp-trash-bin/releases/tag/v1.0.0)** and download **`esp_trash_bin_merged.bin`** (and **`waste-companion-v1.0.0.apk`** for Android).
+   - Open **[Releases (`v1.0.0`)](https://github.com/ASCENDINGHeat/waste-trash-bin/releases/tag/v1.0.0)** and download **`esp_trash_bin_merged.bin`** (and **`waste-companion-v1.0.0.apk`** for Android).
 2. **From GitHub Actions (Latest Commit)**:
-   - Open **[GitHub Actions](https://github.com/ASCENDINGHeat/esp-trash-bin/actions)** $\rightarrow$ select the latest workflow run and download **`esp32s3-trash-bin-firmware.zip`**.
+   - Open **[GitHub Actions](https://github.com/ASCENDINGHeat/waste-trash-bin/actions)** $\rightarrow$ select the latest workflow run and download **`esp32s3-trash-bin-firmware.zip`**.
    - Extract the zip to get **`esp_trash_bin_merged.bin`** (all-in-one Bootloader + Partition Table + Application image for offset **`0x0`**), or individual binaries (`bootloader.bin` at `0x0`, `partition-table.bin` at `0x8000`, `esp_trash_bin.bin` at `0x10000`).
 
 ### 3.2 Entering Download Mode on `YD-ESP32-23`
@@ -129,7 +129,7 @@ esptool.py --chip esp32s3 --port /dev/ttyACM0 --baud 460800 write_flash 0x0 esp_
 ## 4. Git & SSH Remote Reference (Device Environment)
 
 - **Repository Location**: `/storage/emulated/0/projects/esp-idf-project`
-- **Remote (`origin`)**: `git@github.com:ASCENDINGHeat/esp-trash-bin.git`
+- **Remote (`origin`)**: `git@github.com:ASCENDINGHeat/waste-trash-bin.git`
 - **Git Identity**: `ASCENDINGHeat <alfina.jauhar@gmail.com>` (no AI contributor or `Co-authored-by` metadata)
 - **SSH Wrapper**: `/data/user/0/com.agy/files/usr/bin/agy-ssh` (uses `/data/user/0/com.agy/files/.ssh/config` and `/data/user/0/com.agy/files/.ssh/id_ed25519`)
 - **Push Command**:
