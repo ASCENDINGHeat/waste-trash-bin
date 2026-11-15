@@ -155,3 +155,39 @@ idf.py menuconfig
 4. To test remote commands directly from Flespi's **Publisher** tab, publish to `smartbin/smartbin_s3_xxxxxx/cmd`:
    - Open lid for 5 seconds: `{"cmd":"open_lid","hold_s":5}`
    - Trigger ultrasonic measurement: `{"cmd":"measure_now"}`
+
+
+---
+
+## 6. Future Roadmap: Tri-Mode Connectivity (`BLE + LAN + MQTT`)
+
+To support high-bandwidth local transfers (such as user-uploadable OLED animations) alongside cloud telemetry and offline resilience, **W.A.S.T.E.** is designed to evolve into a **Tri-Mode Transport Architecture**:
+
+```mermaid
+flowchart TD
+    APP["W.A.S.T.E. Flutter Companion App"]
+
+    subgraph Transports["Tri-Mode Automatic Transport Router"]
+        LAN["1. Local LAN (HTTP REST + WebSocket + mDNS) - Fast GIF Upload and Local Control"]
+        MQTT["2. Cloud MQTT (Flespi Broker) - Remote Access Anywhere (4G / 5G / WAN)"]
+        BLE["3. Direct BLE GATT (Service 0xFF00) - Setup, Offline Failover and Direct Transfer"]
+    end
+
+    MCU["ESP32-S3 N16R8 (W.A.S.T.E. Firmware)"]
+
+    APP <-->|"Priority 1 (Same Wi-Fi)"| LAN
+    APP <-->|"Priority 2 (Remote / WAN)"| MQTT
+    APP <-->|"Priority 3 (No Wi-Fi / Direct)"| BLE
+
+    LAN <--> MCU
+    MQTT <--> MCU
+    BLE <--> MCU
+```
+
+### Transport Role Comparison
+
+| Transport | Bandwidth / Latency | Primary Use Cases |
+| :--- | :--- | :--- |
+| **LAN (`esp_http_server` + `mDNS`)** | $\sim 500\text{ KB/s}$ (`< 10 ms` latency) | Instant `85 KB` custom GIF/animation uploads (`POST /api/oled/upload` in `< 0.3s`), local dashboard streaming without internet |
+| **MQTT (`esp-mqtt` / Flespi)** | $\sim 10\text{ KB/s}$ (`50–150 ms` latency) | Remote monitoring over cellular (`4G/5G`), retained full-bin alerts, cloud history, remote commands |
+| **BLE GATT (`NimBLE` `0xFF00`)** | $\sim 15\text{–}25\text{ KB/s}$ (`247B` MTU) | Initial Wi-Fi/MQTT NVS provisioning, offline failover telemetry, and routerless chunked `.wbin` animation upload (`~5s`) |

@@ -89,15 +89,17 @@ $$\text{fill\_percent} = \begin{cases} 100 & \text{if } d_{\text{cm}} \le 10.0 \
 
 ---
 
-## 4. Independent OLED Display Engine ("Chinese Dancing Cat GIF")
+## 4. Core 1 OLED Animation & Smart HUD Engine
 
-- **Complete Functional Isolation**:
-  - The OLED display (`SCL = GPIO 6`, `SDA = GPIO 7`) does **not** display trash bin text or wait on sensor locks. Its sole job is to render the **Chinese Dancing Cat GIF** animation smoothly.
+> [!TIP]
+> See **[07-smart-oled-hud-and-ui.md](./07-smart-oled-hud-and-ui.md)** for the full **W.A.S.T.E. Smart OLED HUD** wireframe specification, 5 context-aware screen modes (`IDLE_HUD`, `LID_ACTIVE`, `MEASURING`, `FULL_ALERT`, `BLE_SETUP`), and lock-free compositor pipeline.
+
+- **Dedicated `Core 1` Execution (`SCL = GPIO 6`, `SDA = GPIO 7`)**:
+  - Pinned exclusively to **Xtensa LX7 `Core 1`** so **Core 0** Wi-Fi, BLE, and ultrasonic timing never drop frames.
 - **Memory & Rendering Pipeline**:
   - Each $128 \times 64$ monochrome frame occupies $128 \times 64 / 8 = 1024\text{ bytes}$ ($1\text{ KB}$) in SSD1306 page-addressed format ($8\text{ pages} \times 128\text{ columns}$).
-  - With **16 MB Flash** and **8 MB Octal PSRAM**, the complete multi-frame animation array is copied into an Octal PSRAM buffer (`heap_caps_malloc(..., MALLOC_CAP_SPIRAM)`) at boot.
-  - The `oled_anim_task` on **Core 1** loops through the frames at a steady $20\text{–}25\text{ FPS}$ ($40\text{–}50\text{ ms}$ per frame using `vTaskDelayUntil`) over $400\text{ kHz}$ I2C (`esp_driver_i2c`).
+  - With **16 MB Flash** and **8 MB Octal PSRAM**, the complete 85-frame animation array (`87,040 bytes`) is cached in Octal PSRAM (`heap_caps_malloc(..., MALLOC_CAP_SPIRAM)`) at boot and composited with live HUD status bars (`Page 0` & `Page 7`) or event cards before flushing over $400\text{ kHz}$ I2C (`esp_driver_i2c`).
 - **Battery-Saver Display Sleep Option**:
-  - Configurable via Kconfig/MQTT (`OLED_ALWAYS_ON` vs `OLED_MOTION_WAKE`):
-    - `OLED_ALWAYS_ON`: Plays the dancing cat 24/7 (ideal for USB power).
-    - `OLED_MOTION_WAKE`: Plays the dancing cat while motion is detected + $60\text{ seconds}$ afterward, then sends command `0xAE` (`SSD1306_DISPLAY_OFF`, $< 10\text{ }\mu\text{A}$) until the next motion trigger.
+  - Configurable via Kconfig/MQTT (`oled_sleep_timeout_s`):
+    - `0` (`Always On`): Renders continuously at `15–25 FPS` (ideal for USB power).
+    - `> 0` (`Motion Wake`): Renders while motion/lid activity is active + `N` seconds afterward, then sends command `0xAE` (`SSD1306_DISPLAY_OFF`, $< 10\text{ }\mu\text{A}$) until the next trigger.
