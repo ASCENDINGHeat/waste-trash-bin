@@ -16,6 +16,7 @@ Complete engineering and architectural reference for **W.A.S.T.E.** (**Waste Aut
 | **[05-esp-idf-v6.1-guide.md](./05-esp-idf-v6.1-guide.md)** | **ESP-IDF `^6.1`** build system: CMake $\ge 3.22.1$, modular `esp_driver_*` dependencies, external managed components (`espressif/cjson`, `espressif/led_strip`, `espressif/mqtt`), Picolibc & `-Werror` rules, path-filtered GitHub Actions CI, and flashing guide. |
 | **[06-flutter-companion-app.md](./06-flutter-companion-app.md)** | **W.A.S.T.E. Flutter Companion App** (`companion_app/`): Dual-transport architecture (MQTT + BLE GATT `0xFF00`–`0xFF06` failover), zero-touch BLE Wi-Fi/MQTT provisioning, remote lid & sensor control, unit tests, and phone-side historical telemetry analytics. |
 | **[07-smart-oled-hud-and-ui.md](./07-smart-oled-hud-and-ui.md)** | **Core 1 Smart OLED HUD & Context-Aware UI Specification**: $128 \times 64$ page memory map, 6 event-driven screen modes (`BOOT_SPLASH`, `IDLE_HUD`, `LID_ACTIVE`, `MEASURING`, `FULL_ALERT`, `BLE_SETUP`), `MODAL_WARNING_POPUP` centered modal overlay, `.wbin` custom animation uploads, ASCII wireframes, and lock-free compositor pipeline. |
+| **[08-feature-status-and-gap-analysis.md](./08-feature-status-and-gap-analysis.md)** | **Feature Tracking & Documentation Gap Analysis**: Audited matrix comparing currently implemented `v1.1.0` firmware/app features against planned specifications (`HUD`, `.wbin` uploads, LAN mode) and minor schema drift. |
 | **[../CHANGELOG.md](../CHANGELOG.md)** | Release history (`v1.1.0` & `v1.0.0` release notes). |
 
 ---
