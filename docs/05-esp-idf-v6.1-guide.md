@@ -52,30 +52,37 @@ dependencies:
 ## 2. Project Directory Structure
 
 ```text
-esp-idf-project/
+esp-trash-bin/
 ├── CMakeLists.txt                       # Root CMake (requires >= 3.22.1)
 ├── sdkconfig.defaults                   # ESP32-S3 N16R8 + NimBLE + Power Management defaults
-├── README.md                            # Quick-start overview and links to docs/
-├── docs/                                # Complete project documentation folder
-│   ├── README.md                        # Documentation index
-│   ├── 01-hardware-and-pinout.md        # YD-ESP32-23 N16R8 specs, jumpers, pin mapping
-│   ├── 02-functional-specification.md   # Dual-core architecture, Trash Bin FSM, OLED GIF engine
-│   ├── 03-connectivity-ble-and-mqtt.md  # NimBLE provisioning/failover, GATT, MQTT telemetry
-│   ├── 04-power-management-and-battery.md # 1000 mAh battery analysis & sleep modes
-│   └── 05-esp-idf-v6.1-guide.md         # ESP-IDF ^6.1 migration, drivers, and Git workflow
+├── partitions.csv                       # Custom 16 MB Flash partition table (2 MB factory app)
+├── README.md                            # W.A.S.T.E. product overview, architecture & quick start
+├── CHANGELOG.md                         # Release history (v1.0.0 Initial Release)
+├── .github/workflows/
+│   ├── build.yml                        # Path-filtered ESP-IDF v6.1 firmware CI workflow
+│   ├── build-app.yml                    # Path-filtered Flutter Companion APK & test CI workflow
+│   └── release.yml                      # Tag-triggered (v*) GitHub Release publisher (.bin + .apk)
+├── companion_app/                       # Cross-platform Flutter Companion App (Android / iOS)
+│   ├── pubspec.yaml                     # Flutter dependencies (mqtt_client, flutter_blue_plus, fl_chart)
+│   ├── lib/                             # Material 3 dashboard, BLE provisioning, calibration & services
+│   └── test/widget_test.dart            # Automated unit & widget test suite
+├── tools/                               # Custom GIF-to-OLED 128x64 1-bit C header converters
+│   ├── gif_to_oled.mjs                  # Zero-dependency Node.js GIF decoder + Atkinson ditherer
+│   └── gif_to_oled.py                   # Python Pillow GIF converter
+├── docs/                                # Complete project documentation suite (01 through 06)
 └── main/
     ├── CMakeLists.txt                   # Explicit esp_driver_* component registration
-    ├── idf_component.yml                # IDF Component Manager manifest (^6.1.0)
+    ├── idf_component.yml                # IDF Component Manager manifest (cjson, led_strip, mqtt)
     ├── Kconfig.projbuild                # Custom menuconfig parameters (pins, angles, intervals)
     ├── app_config.h / app_config.c      # NVS configuration persistence & shared types
     ├── power_mgr.h / power_mgr.c        # DFS, Light Sleep, 5V rail gate & RTC Deep Sleep
     ├── servo_sg90.h / servo_sg90.c      # GPIO 21 50Hz LEDC driver (fast open, soft close, auto-detach)
     ├── ultrasonic_hcsr04.h / .c         # GPIO 5/18 HC-SR04 5-sample median filter & 10-30cm mapping
     ├── rgb_status.h / rgb_status.c      # GPIO 48 WS2812B RMT status indicator
-    ├── dancing_cat_frames.h             # 16-frame 128x64 Chinese Dancing Cat bitmap generator
-    ├── oled_dancing_cat.h / .c          # Core 1 400kHz I2C OLED animation engine (GPIO 6/7)
-    ├── net_ble_mqtt.h / net_ble_mqtt.c  # Wi-Fi STA, NimBLE GATT setup/failover, MQTT & PSRAM buffer
-    ├── trash_bin_fsm.h / .c             # Core 0 Smart Trash Bin FSM, PIR blanking & periodic timer
+    ├── dancing_cat_frames.h             # 85-frame 128x64 Atkinson-dithered animation bitmap array
+    ├── oled_dancing_cat.h / .c          # Core 1 400kHz I2C OLED animation engine (SCL: 6, SDA: 7)
+    ├── net_ble_mqtt.h / net_ble_mqtt.c  # Wi-Fi STA, NimBLE GATT (0xFF00-0xFF06), BOOT button & MQTT
+    ├── trash_bin_fsm.h / .c             # Core 0 W.A.S.T.E. FSM, PIR blanking & periodic timer
     └── main.c                           # Application entry point (app_main)
 ```
 
@@ -83,15 +90,12 @@ esp-idf-project/
 
 ## 3. Flashing the Compiled Firmware (`YD-ESP32-23` / `ESP32-S3 N16R8`)
 
-### 3.1 Download Artifact from GitHub Actions
-1. Open **[GitHub Actions](https://github.com/ASCENDINGHeat/esp-trash-bin/actions)** $\rightarrow$ select the latest successful workflow run.
-2. Scroll to **Artifacts** and download **`esp32s3-trash-bin-firmware.zip`**.
-3. Extract the zip. It contains:
-   - **`esp_trash_bin_merged.bin`** — All-in-one merged image (Bootloader + Partition Table + Application). Flash at offset **`0x0`**.
-   - Individual binaries (if flashing separately):
-     - `bootloader.bin` $\rightarrow$ **`0x0`**
-     - `partition-table.bin` $\rightarrow$ **`0x8000`**
-     - `esp_trash_bin.bin` $\rightarrow$ **`0x10000`**
+### 3.1 Download Binary from GitHub Releases (`v1.0.0`) or Actions
+1. **From GitHub Releases (Recommended)**:
+   - Open **[Releases (`v1.0.0`)](https://github.com/ASCENDINGHeat/esp-trash-bin/releases/tag/v1.0.0)** and download **`esp_trash_bin_merged.bin`** (and **`waste-companion-v1.0.0.apk`** for Android).
+2. **From GitHub Actions (Latest Commit)**:
+   - Open **[GitHub Actions](https://github.com/ASCENDINGHeat/esp-trash-bin/actions)** $\rightarrow$ select the latest workflow run and download **`esp32s3-trash-bin-firmware.zip`**.
+   - Extract the zip to get **`esp_trash_bin_merged.bin`** (all-in-one Bootloader + Partition Table + Application image for offset **`0x0`**), or individual binaries (`bootloader.bin` at `0x0`, `partition-table.bin` at `0x8000`, `esp_trash_bin.bin` at `0x10000`).
 
 ### 3.2 Entering Download Mode on `YD-ESP32-23`
 - **Via `COM` (`UART`) USB-C Port (`CH343P`)**: Supports automatic bootloader entry via `DTR`/`RTS`.

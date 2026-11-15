@@ -9,19 +9,19 @@ To guarantee that the **OLED GIF Animation** never drops frames during Wi-Fi con
 
 ```mermaid
 flowchart TD
-    subgraph Core0["Core 0: W.A.S.T.E. Control FSM & Wireless Stack"]
-        PIR["HC-SR501 PIR (GPIO 2)"] -->|ISR / Event Queue| FSM["W.A.S.T.E. FSM Task"]
-        TIMER["Periodic Check Timer (15m)"] -->|Timer Event| FSM
-        FSM -->|Fast Open / Soft Close + Auto-Detach| SERVO["SG90 Servo LEDC (GPIO 21)"]
-        FSM -->|5-Ping Median Filter| ULTRA["HC-SR04 Ultrasonic (TRIG: 5, ECHO: 18)"]
-        ULTRA -->|Distance cm & Fill %| FSM
-        FSM -->|Status Color| RGB["WS2812 RGB LED (GPIO 48)"]
-        FSM -->|Telemetry Event| NET["Wi-Fi / MQTT / BLE Manager"]
+    subgraph Core0["Core 0 - W.A.S.T.E. Control FSM and Wireless Stack"]
+        PIR["HC-SR501 PIR (GPIO 2)"] -->|"ISR / Event Queue"| FSM["W.A.S.T.E. FSM Task"]
+        TIMER["Periodic Check Timer (15m)"] -->|"Timer Event"| FSM
+        FSM -->|"Fast Open / Soft Close + Auto-Detach"| SERVO["SG90 Servo LEDC (GPIO 21)"]
+        FSM -->|"5-Ping Median Filter"| ULTRA["HC-SR04 Ultrasonic (TRIG 5, ECHO 18)"]
+        ULTRA -->|"Distance cm and Fill Pct"| FSM
+        FSM -->|"Status Color"| RGB["WS2812 RGB LED (GPIO 48)"]
+        FSM -->|"Telemetry Event"| NET["Wi-Fi / MQTT / BLE Manager"]
     end
 
-    subgraph Core1["Core 1: Independent OLED Animation Engine"]
-        PSRAM["Dancing Cat Frames (Flash -> 8MB Octal PSRAM)"] --> OLED_TASK["OLED Render Task (20-25 FPS)"]
-        OLED_TASK -->|400kHz I2C Master (SCL: 6, SDA: 7)| OLED["128x64 I2C OLED Display"]
+    subgraph Core1["Core 1 - Independent OLED Animation Engine"]
+        PSRAM["85 Animation Frames (8MB Octal PSRAM)"] --> OLED_TASK["OLED Render Task (15-25 FPS)"]
+        OLED_TASK -->|"400kHz I2C Master (SCL 6, SDA 7)"| OLED["128x64 I2C OLED Display"]
     end
 ```
 

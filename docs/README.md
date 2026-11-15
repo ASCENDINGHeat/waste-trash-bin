@@ -13,14 +13,15 @@ Complete engineering and architectural reference for **W.A.S.T.E.** (**Waste Aut
 | **[02-functional-specification.md](./02-functional-specification.md)** | Dual-core FreeRTOS task split (`Core 0` W.A.S.T.E. FSM vs `Core 1` OLED Engine), Finite State Machine, `SG90` fast-open / soft-close ramp & PWM auto-detach, PIR anti-retrigger blanking, post-close + periodic `HC-SR04` 5-sample median filtering, $10\text{–}30\text{ cm}$ fill-level formula, `GPIO 48` RGB status codes, and the independent `Core 1` OLED GIF engine. |
 | **[03-connectivity-ble-and-mqtt.md](./03-connectivity-ble-and-mqtt.md)** | NimBLE initial provisioning (Wi-Fi + MQTT broker config), automatic BLE failover on Wi-Fi loss, 256-slot offline Octal PSRAM telemetry ring buffer, live BLE GATT telemetry service, MQTT topic hierarchy, JSON payload schemas, and remote commands. |
 | **[04-power-management-and-battery.md](./04-power-management-and-battery.md)** | Component current draw breakdown, **1000 mAh battery runtime calculations** across 4 power profiles ($5.5\text{ hours}$ to $22\text{ days}$), ESP-IDF `esp_pm` DFS + `WIFI_PS_MAX_MODEM` + `RTC_GPIO2` Deep Sleep wakeup, OLED `0xAE` sleep timeout, 5V rail MOSFET gating, and **16 MB NOR Flash wear-leveling endurance analysis**. |
-| **[05-esp-idf-v6.1-guide.md](./05-esp-idf-v6.1-guide.md)** | **ESP-IDF `^6.1`** build system: CMake $\ge 3.22.1$, modular `esp_driver_*` dependencies, external managed components (`espressif/cjson`, `espressif/led_strip`, `espressif/mqtt`), Picolibc & `-Werror` rules, GitHub Actions CI, and flashing guide. |
-| **[06-flutter-companion-app.md](./06-flutter-companion-app.md)** | **W.A.S.T.E. Flutter Companion App** (`companion_app/`): Dual-transport architecture (MQTT + BLE GATT `0xFF00`–`0xFF06` failover), zero-touch BLE Wi-Fi/MQTT provisioning, remote lid & sensor control, and phone-side historical telemetry analytics. |
+| **[05-esp-idf-v6.1-guide.md](./05-esp-idf-v6.1-guide.md)** | **ESP-IDF `^6.1`** build system: CMake $\ge 3.22.1$, modular `esp_driver_*` dependencies, external managed components (`espressif/cjson`, `espressif/led_strip`, `espressif/mqtt`), Picolibc & `-Werror` rules, path-filtered GitHub Actions CI, and flashing guide. |
+| **[06-flutter-companion-app.md](./06-flutter-companion-app.md)** | **W.A.S.T.E. Flutter Companion App** (`companion_app/`): Dual-transport architecture (MQTT + BLE GATT `0xFF00`–`0xFF06` failover), zero-touch BLE Wi-Fi/MQTT provisioning, remote lid & sensor control, unit tests, and phone-side historical telemetry analytics. |
+| **[../CHANGELOG.md](../CHANGELOG.md)** | Release history and **`v1.0.0` Initial Release** notes. |
 
 ---
 
 ## Quick Hardware & Pin Summary
 
-- **System Name**: **W.A.S.T.E.** (*Waste Automation and Sensing Technology Engine*)
+- **System Name**: **W.A.S.T.E.** (*Waste Automation and Sensing Technology Engine*) — **`v1.0.0`**
 - **MCU**: `ESP32-S3-WROOM-1-N16R8` (`YD-ESP32-23` DevKitC-1 clone, 16 MB QIO Flash, 8 MB Octal PSRAM)
 - **ESP-IDF Version**: `^6.1` (`v6.1` Stable, CMake $\ge 3.22.1$)
 - **PIR Motion Sensor (`HC-SR501`)**: `OUT -> GPIO 2` (`RTC_GPIO2`)
@@ -28,3 +29,4 @@ Complete engineering and architectural reference for **W.A.S.T.E.** (**Waste Aut
 - **Micro Servo (`SG90`)**: `PWM -> GPIO 21` (50 Hz 14-bit LEDC)
 - **I2C OLED (`SSD1306` / `SH1106`)**: `SCL -> GPIO 6`, `SDA -> GPIO 7` (400 kHz `esp_driver_i2c`, Core 1 GIF Engine)
 - **Onboard Status RGB LED (`WS2812B`)**: `GPIO 48` (RMT `led_strip`)
+- **Onboard Provision Button (`BOOT`)**: `GPIO 0` (Short press = Enable BLE advertising; 3s hold = Reset Wi-Fi NVS)

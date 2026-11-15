@@ -1,0 +1,108 @@
+name: Publish W.A.S.T.E. Release (Firmware + Android APK)
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Release tag (e.g. v1.0.0)'
+        required: true
+        default: 'v1.0.0'
+
+permissions:
+  contents: write
+
+jobs:
+  build-firmware:
+    name: Build Release Firmware (ESP-IDF v6.1)
+    runs-on: ubuntu-latest
+    container:
+      image: espressif/idf:v6.1
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Compile ESP32-S3 Merged Binary
+        shell: bash
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          . /opt/esp/idf/export.sh
+          idf.py set-target esp32s3
+          idf.py build
+          (cd build && esptool.py --chip esp32s3 merge_bin -o esp_trash_bin_merged.bin @flash_args)
+
+      - name: Upload Firmware Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-firmware
+          path: |
+            build/esp_trash_bin_merged.bin
+            build/esp_trash_bin.bin
+
+  build-apk:
+    name: Build Release Android APK (Flutter)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Set up Flutter Stable
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Test & Build Release APK
+        working-directory: companion_app
+        run: |
+          cp android/app/src/main/AndroidManifest.xml /tmp/AndroidManifest.xml
+          flutter create --platforms=android --org com.ascendingheat.waste --project-name waste_companion .
+          cp /tmp/AndroidManifest.xml android/app/src/main/AndroidManifest.xml
+          flutter pub get
+          flutter test
+          flutter build apk --release
+          cp build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/waste-companion-${GITHUB_REF_NAME}.apk
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-apk
+          path: companion_app/build/app/outputs/flutter-apk/waste-companion-*.apk
+
+  publish-release:
+    name: Create GitHub Release
+    needs: [build-firmware, build-apk]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download Built Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: "W.A.S.T.E. ${{ github.ref_name }} — Firmware & Companion App"
+          body_path: CHANGELOG.md
+          files: |
+            release-assets/esp_trash_bin_merged.bin
+            release-assets/esp_trash_bin.bin
+            release-assets/waste-companion-*.apk
+          draft: false
+          prerelease: false

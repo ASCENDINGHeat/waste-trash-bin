@@ -16,29 +16,29 @@ It serves four core roles in the **W.A.S.T.E.** (*Waste Automation and Sensing T
 
 ```mermaid
 flowchart LR
-    subgraph App["W.A.S.T.E. Flutter App (companion_app/)"]
-        UI["Material 3 Dashboard\n& Control Sheets"]
-        SVC["WasteConnectionService\n(Unified State & History)"]
-        STORE["Local History Store\n(500-Event Ring on Phone)"]
+    subgraph App["W.A.S.T.E. Flutter App"]
+        UI["Material 3 Dashboard and Control Sheets"]
+        SVC["WasteConnectionService (Unified State and History)"]
+        STORE["Local History Store (500-Event Ring on Phone)"]
         UI <--> SVC
         SVC <--> STORE
     end
 
     subgraph Transport["Automatic Dual Transport"]
-        MQTT["MQTT Client (mqtt_client)\nsmartbin/<id>/telemetry\nsmartbin/<id>/cmd"]
-        BLE["BLE GATT Client (flutter_blue_plus)\nService 0xFF00\nChars 0xFF01 - 0xFF06"]
+        MQTT["MQTT Client (mqtt_client) smartbin/+/telemetry and cmd"]
+        BLE["BLE GATT Client (flutter_blue_plus) Service 0xFF00 (0xFF01 - 0xFF06)"]
     end
 
     subgraph MCU["ESP32-S3 N16R8 (W.A.S.T.E. Firmware)"]
-        NET["net_ble_mqtt.c\nWi-Fi STA + NimBLE + PSRAM Buffer"]
-        FSM["trash_bin_fsm.c\nCore 0 Control Engine"]
+        NET["net_ble_mqtt.c (Wi-Fi STA + NimBLE + PSRAM Buffer)"]
+        FSM["trash_bin_fsm.c (Core 0 Control Engine)"]
         NET <--> FSM
     end
 
-    SVC <==>|"Primary (LAN / Cloud)"| MQTT
-    SVC <==>|"Setup & Offline Failover"| BLE
-    MQTT <==>|"Wi-Fi (TCP 1883)"| NET
-    BLE <==>|"Bluetooth LE 5.0"| NET
+    SVC <-->|"Primary (Flespi / LAN / Cloud)"| MQTT
+    SVC <-->|"Setup and Offline Failover"| BLE
+    MQTT <-->|"Wi-Fi (TCP 1883 / TLS 8883)"| NET
+    BLE <-->|"Bluetooth LE 5.0"| NET
 ```
 
 ---
@@ -46,16 +46,16 @@ flowchart LR
 ## 3. Protocol Integration Matrix
 
 ### 3.1 BLE GATT Service (`0xFF00`)
-Used during initial setup and whenever Wi-Fi is offline:
+Used during initial setup, whenever Wi-Fi/MQTT is offline, or when triggered by pressing **`BOOT` (`GPIO 0`)**:
 
 | Characteristic UUID | Direction | Flutter Action | Firmware Handler ([`net_ble_mqtt.c`](../main/net_ble_mqtt.c)) |
 | :--- | :--- | :--- | :--- |
 | **`0xFF01`** | `Read` / `Write` | Read current SSID or write new Wi-Fi SSID | Reads/writes `cfg->wifi_ssid` |
 | **`0xFF02`** | `Write` | Write Wi-Fi WPA2 password | Writes `cfg->wifi_pass` |
-| **`0xFF03`** | `Read` / `Write` | Read/write MQTT Broker URI (`mqtt://host:1883`) | Reads/writes `cfg->mqtt_uri` |
+| **`0xFF03`** | `Read` / `Write` | Read/write MQTT Broker URI (`mqtt://<TOKEN>@mqtt.flespi.io:1883`) | Reads/writes `cfg->mqtt_uri` |
 | **`0xFF04`** | `Write` | Write `[0x01]` to commit NVS & connect Wi-Fi | Calls `app_config_save()` + `wifi_attempt_connect()` |
 | **`0xFF05`** | `Read` / `Notify` | Subscribe to live JSON telemetry over BLE | Pushes `s_latest_telem_json` on every sensor check |
-| **`0xFF06`** | `Write` | Send remote JSON command (`open_lid`, `measure_now`, `configure`) | Invokes `handle_mqtt_cmd_payload()` directly over BLE |
+| **`0xFF06`** | `Write` | Send remote JSON command (`open_lid`, `measure_now`, `configure`, `ble_provision`, `reset_wifi`) | Invokes `handle_mqtt_cmd_payload()` directly over BLE |
 
 ### 3.2 MQTT Topics (`smartbin/<device_id>/*`)
 Used during normal Wi-Fi operation (supports wildcard `smartbin/+/telemetry` auto-discovery or explicit `<device_id>`):
@@ -65,7 +65,7 @@ Used during normal Wi-Fi operation (supports wildcard `smartbin/+/telemetry` aut
 | `smartbin/<id>/telemetry` | Subscribe (`QoS 1`) | Updates live gauge, stats cards, and appends to phone history chart |
 | `smartbin/<id>/alert` | Subscribe (`Retained`) | Triggers high-visibility **Bin Full ($\ge 95\%$)** banner |
 | `smartbin/<id>/status` | Subscribe (`Retained`) | Shows real-time node LWT status (`online` / `offline`) |
-| `smartbin/<id>/cmd` | Publish (`QoS 1`) | Sends `open_lid`, `measure_now`, and `configure` JSON payloads |
+| `smartbin/<id>/cmd` | Publish (`QoS 1`) | Sends `open_lid`, `measure_now`, `configure`, `ble_provision`, and `reset_wifi` JSON payloads |
 
 ---
 
@@ -76,31 +76,33 @@ companion_app/
 ├── pubspec.yaml                              # Flutter dependencies (mqtt_client, flutter_blue_plus, fl_chart, etc.)
 ├── android/
 │   └── app/src/main/AndroidManifest.xml      # BLE (Android 12+ BLUETOOTH_SCAN/CONNECT) & Internet permissions
-└── lib/
-    ├── main.dart                             # App entrypoint & W.A.S.T.E. Dark Material 3 theme
-    ├── models/
-    │   └── telemetry.dart                    # WasteTelemetry & WasteConfig JSON models
-    ├── services/
-    │   └── waste_connection_service.dart     # Unified MQTT + BLE GATT client & local history manager
-    └── screens/
-        ├── dashboard_screen.dart             # Main fill gauge, telemetry cards, trend chart & quick actions
-        ├── ble_provision_sheet.dart          # BLE scanner, direct connect & Wi-Fi/MQTT NVS provisioning
-        └── calibration_sheet.dart            # Ultrasonic depth (10-30cm), timer & OLED sleep configuration
+├── lib/
+│   ├── main.dart                             # App entrypoint & W.A.S.T.E. Dark Material 3 theme
+│   ├── models/
+│   │   └── telemetry.dart                    # WasteTelemetry & WasteBinConfig JSON models
+│   ├── services/
+│   │   └── waste_connection_service.dart     # Unified MQTT 3.1.1 (Flespi) + BLE GATT client & 500-event history
+│   └── screens/
+│       ├── dashboard_screen.dart             # Main fill gauge, telemetry cards, trend chart & quick actions
+│       ├── ble_provision_sheet.dart          # BLE scanner, Flespi preset & Wi-Fi/MQTT NVS provisioning
+│       └── calibration_sheet.dart            # Ultrasonic depth (10-30cm), timer & OLED sleep configuration
+└── test/
+    └── widget_test.dart                      # Unit & widget test suite (protocol parsing, clamping, history, UI)
 ```
 
 ---
 
-## 5. Building & Running the Companion App
+## 5. Installing & Building the Companion App (`v1.0.0`)
 
-### Option 1 — Download Pre-Built APK from GitHub Actions
-Every push to `main` automatically builds **`waste-companion-release.apk`** in GitHub Actions alongside the ESP32-S3 firmware binary.
-1. Open the **[GitHub Actions](https://github.com/ASCENDINGHeat/esp-trash-bin/actions)** tab.
-2. Download the **`waste-companion-apk`** artifact and install `app-release.apk` on your Android phone.
+### Option 1 — Download Pre-Built APK from GitHub Releases (`v1.0.0`)
+1. Open the **[GitHub Releases (`v1.0.0`)](https://github.com/ASCENDINGHeat/esp-trash-bin/releases/tag/v1.0.0)** page (or the **[Build Companion App workflow](https://github.com/ASCENDINGHeat/esp-trash-bin/actions/workflows/build-app.yml)**).
+2. Download **`waste-companion-v1.0.0.apk`** and install it on your Android device.
 
-### Option 2 — Build Locally with Flutter SDK
+### Option 2 — Run Tests & Build Locally with Flutter SDK
 ```bash
 cd companion_app
 flutter pub get
+flutter test
 flutter build apk --release
 # Output: build/app/outputs/flutter-apk/app-release.apk
 ```
