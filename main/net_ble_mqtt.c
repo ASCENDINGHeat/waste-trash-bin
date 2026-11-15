@@ -14,6 +14,7 @@
 #include "esp_timer.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
+#include "driver/gpio.h"
 #include "mqtt_client.h"
 #include "cJSON.h"
 
@@ -27,6 +28,7 @@
 
 static const char *TAG = "net_ble_mqtt";
 
+#define BOOT_BUTTON_GPIO            GPIO_NUM_0
 #define WIFI_MAX_RETRY              5
 #define WIFI_BG_RETRY_INTERVAL_US   (60ULL * 1000000ULL) /* 60s background retry while in BLE failover */
 #define PSRAM_RINGBUF_CAPACITY      256
@@ -57,12 +59,14 @@ static char s_topic_cmd[64];
 static net_cmd_callbacks_t s_cmd_cbs = {0};
 static esp_mqtt_client_handle_t s_mqtt_client = NULL;
 static esp_timer_handle_t s_wifi_retry_timer = NULL;
+static esp_timer_handle_t s_boot_btn_timer = NULL;
 
 static bool s_wifi_connected = false;
 static bool s_mqtt_connected = false;
 static bool s_ble_advertising = false;
 static bool s_nimble_started = false;
 static int s_wifi_retry_count = 0;
+static int s_boot_btn_hold_ticks = 0;
 static uint16_t s_ble_conn_handle = BLE_HS_CONN_HANDLE_NONE;
 static uint16_t s_telem_val_handle = 0;
 static uint8_t s_ble_addr_type = BLE_OWN_ADDR_PUBLIC;
@@ -208,6 +212,17 @@ static void handle_mqtt_cmd_payload(const char *data, int len)
             if (s_cmd_cbs.on_open_lid != NULL) {
                 s_cmd_cbs.on_open_lid(hold_s);
             }
+        } else if (strcmp(cmd, "ble_provision") == 0) {
+            ESP_LOGI(TAG, "Remote command activated BLE provisioning advertising");
+            ble_start_advertising();
+        } else if (strcmp(cmd, "reset_wifi") == 0) {
+            smartbin_config_t *cfg = app_config_get();
+            memset(cfg->wifi_ssid, 0, sizeof(cfg->wifi_ssid));
+            memset(cfg->wifi_pass, 0, sizeof(cfg->wifi_pass));
+            app_config_save(cfg);
+            esp_wifi_disconnect();
+            ble_start_advertising();
+            ESP_LOGW(TAG, "Wi-Fi credentials cleared via remote command; BLE provisioning active");
         } else if (strcmp(cmd, "configure") == 0) {
             smartbin_config_t *cfg = app_config_get();
             const cJSON *full_cm = cJSON_GetObjectItemCaseSensitive(root, "full_cm");
@@ -251,11 +266,13 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
             esp_mqtt_client_publish(s_mqtt_client, s_topic_status, "online", 0, 1, 1);
             esp_mqtt_client_subscribe(s_mqtt_client, s_topic_cmd, 1);
             mqtt_flush_psram_ringbuf();
+            ble_stop_advertising();
             break;
 
         case MQTT_EVENT_DISCONNECTED:
             s_mqtt_connected = false;
-            ESP_LOGW(TAG, "MQTT disconnected from broker");
+            ESP_LOGW(TAG, "MQTT disconnected from broker; enabling BLE GATT provisioning/failover");
+            ble_start_advertising();
             break;
 
         case MQTT_EVENT_DATA:
@@ -526,6 +543,30 @@ static void wifi_bg_retry_timer_cb(void *arg)
     }
 }
 
+static void boot_btn_timer_cb(void *arg)
+{
+    (void)arg;
+    if (gpio_get_level(BOOT_BUTTON_GPIO) == 0) {
+        s_boot_btn_hold_ticks++;
+        if (s_boot_btn_hold_ticks == 30) { /* Held for 3.0 seconds (30 x 100ms) */
+            smartbin_config_t *cfg = app_config_get();
+            memset(cfg->wifi_ssid, 0, sizeof(cfg->wifi_ssid));
+            memset(cfg->wifi_pass, 0, sizeof(cfg->wifi_pass));
+            app_config_save(cfg);
+            esp_wifi_disconnect();
+            ble_start_advertising();
+            ESP_LOGW(TAG, "BOOT button held 3s: cleared Wi-Fi NVS credentials & restarted BLE provisioning!");
+        }
+    } else {
+        if (s_boot_btn_hold_ticks >= 1 && s_boot_btn_hold_ticks < 30) {
+            /* Short press: immediately re-enable BLE advertising without wiping Wi-Fi */
+            ble_start_advertising();
+            ESP_LOGI(TAG, "BOOT button pressed: BLE provisioning advertising enabled");
+        }
+        s_boot_btn_hold_ticks = 0;
+    }
+}
+
 static void wifi_ip_event_handler(void *arg, esp_event_base_t event_base,
                                   int32_t event_id, void *event_data)
 {
@@ -560,7 +601,7 @@ static void wifi_ip_event_handler(void *arg, esp_event_base_t event_base,
         if (s_wifi_retry_timer != NULL) {
             esp_timer_stop(s_wifi_retry_timer);
         }
-        ble_stop_advertising();
+        /* Keep BLE advertising active until MQTT_EVENT_CONNECTED succeeds */
         mqtt_start_or_reconfigure();
     }
 }
@@ -593,6 +634,24 @@ esp_err_t net_ble_mqtt_init(const net_cmd_callbacks_t *cbs)
         .name = "wifi_bg_retry",
     };
     esp_timer_create(&retry_timer_args, &s_wifi_retry_timer);
+
+    /* Configure onboard BOOT button (GPIO 0) to re-trigger BLE provisioning anytime */
+    gpio_config_t boot_btn_cfg = {
+        .pin_bit_mask = (1ULL << BOOT_BUTTON_GPIO),
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en = GPIO_PULLUP_ENABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    gpio_config(&boot_btn_cfg);
+
+    const esp_timer_create_args_t boot_btn_timer_args = {
+        .callback = &boot_btn_timer_cb,
+        .name = "boot_btn_poll",
+    };
+    if (esp_timer_create(&boot_btn_timer_args, &s_boot_btn_timer) == ESP_OK) {
+        esp_timer_start_periodic(s_boot_btn_timer, 100 * 1000); /* 100 ms */
+    }
 
     /* Initialize TCP/IP stack and Wi-Fi STA */
     ESP_ERROR_CHECK(esp_netif_init());
