@@ -98,3 +98,60 @@ Built using the `espressif/cjson` managed component:
   1. `open_cycles` is incremented and committed to `NVS` (`nvs_flash`).
   2. Up to **256 telemetry records** are queued in a ring buffer allocated in the **8 MB Octal PSRAM**.
   3. As soon as `MQTT_EVENT_CONNECTED` fires, queued records are published in chronological order before normal operation resumes.
+
+
+---
+
+## 5. Connecting to Flespi MQTT Broker (`mqtt.flespi.io`)
+
+**Flespi** provides a fast, free cloud MQTT 3.1.1 / 5.0 broker (`mqtt.flespi.io`) with a built-in web MQTT Board for inspecting topics in real time.
+
+### Step 1 — Get Your Flespi Token
+1. Sign in at **[flespi.io](https://flespi.io/)** (GitHub / Google login supported).
+2. In the left sidebar, go to **Access Control → Tokens**.
+3. Copy your **Master Token** (or click **`+`** to create a Standard Token).
+   - It is a 64-character string (e.g., `a1B2c3D4e5F6...`).
+   - Do **not** include the `FlespiToken ` prefix when embedding it in an `mqtt://` URI (or if you paste it into the W.A.S.T.E. Companion App's **Flespi Token** box, the app automatically strips any `FlespiToken ` prefix for you).
+
+### Step 2 — Format the Flespi Broker URI
+Flespi authenticates using your token as the **MQTT Username** (with an empty password). Both the **ESP32-S3 (`esp-mqtt`)** and the **W.A.S.T.E. Flutter Companion App** natively support embedding the token directly in the URI:
+
+```text
+mqtt://<YOUR_FLESPI_TOKEN>@mqtt.flespi.io:1883
+```
+
+### Step 3 — Provision the ESP32-S3 & Connect the Companion App
+
+#### Option A: Via the W.A.S.T.E. Flutter Companion App (No Re-flashing Needed)
+1. Power on the `YD-ESP32-23` (`ESP32-S3`). If Wi-Fi is not yet configured, the onboard RGB LED (`GPIO 48`) glows **Blue** and advertises **`smartbin_s3_xxxxxx`** over BLE.
+2. Open the **W.A.S.T.E. Companion App** and tap the **Antenna icon (`Connectivity & BLE Provisioning`)** in the top-right corner.
+3. Under **1. MQTT Broker**:
+   - Tap **`Flespi Preset`** (sets `mqtt://mqtt.flespi.io:1883`).
+   - Paste your 64-character token into **`Flespi Token / MQTT Username`**.
+   - Tap **`Connect MQTT`** — the phone app automatically builds `mqtt://<TOKEN>@mqtt.flespi.io:1883` and connects using MQTT 3.1.1.
+4. Under **2. Direct BLE GATT (`0xFF00`)**:
+   - Tap **`Scan BLE`** and tap **`Connect`** next to `smartbin_s3_xxxxxx`.
+5. Under **3. Provision ESP32-S3 NVS over BLE**:
+   - Enter your **2.4 GHz Wi-Fi SSID** and **Password**.
+   - Tap **`Write to ESP32-S3 NVS & Connect Wi-Fi`** — this writes your Wi-Fi credentials (`0xFF01`/`0xFF02`) and the full Flespi token URI (`0xFF03`) into the ESP32-S3's NVS flash and triggers immediate connection (`0xFF04`).
+
+#### Option B: Compile Default into Firmware (`idf.py menuconfig`)
+If building locally, you can also set the default broker URI in **`Kconfig.projbuild`**:
+```text
+idf.py menuconfig
+  -> W.A.S.T.E. Smart Trash Bin Configuration (ESP32-S3 N16R8)
+  -> Default MQTT Broker URI: mqtt://<YOUR_FLESPI_TOKEN>@mqtt.flespi.io:1883
+```
+
+### Step 4 — Verify Live Telemetry in Flespi's Web Dashboard
+1. In your browser, open **[MQTT Board (flespi.io)](https://flespi.io/mqtt-board)** (or click **MQTT → MQTT Board** inside the Flespi panel).
+2. Add a **Subscriber** with topic filter:
+   ```text
+   smartbin/#
+   ```
+3. You will immediately see:
+   - `smartbin/smartbin_s3_xxxxxx/status` $\rightarrow$ `"online"` (retained)
+   - `smartbin/smartbin_s3_xxxxxx/telemetry` $\rightarrow$ Live JSON after every lid closure or 15-minute periodic ultrasonic ping.
+4. To test remote commands directly from Flespi's **Publisher** tab, publish to `smartbin/smartbin_s3_xxxxxx/cmd`:
+   - Open lid for 5 seconds: `{"cmd":"open_lid","hold_s":5}`
+   - Trigger ultrasonic measurement: `{"cmd":"measure_now"}`

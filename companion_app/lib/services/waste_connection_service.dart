@@ -123,17 +123,30 @@ class WasteConnectionService extends ChangeNotifier {
       return;
     }
 
+    final isSecure = parsed.scheme == 'mqtts' || parsed.scheme == 'ssl';
     final host = parsed.host;
-    final port = parsed.hasPort ? parsed.port : 1883;
+    final port = parsed.hasPort ? parsed.port : (isSecure ? 8883 : 1883);
     final clientId =
         'waste_app_${DateTime.now().millisecondsSinceEpoch.remainder(100000)}';
+
+    String? username;
+    String? password;
+    if (parsed.userInfo.isNotEmpty) {
+      final parts = parsed.userInfo.split(':');
+      username = Uri.decodeComponent(parts[0]);
+      if (parts.length > 1) {
+        password = Uri.decodeComponent(parts.sublist(1).join(':'));
+      }
+    }
 
     _statusMessage = 'Connecting MQTT ($host:$port)...';
     notifyListeners();
 
     final client = MqttServerClient.withPort(host, clientId, port);
+    client.setProtocolV311();
     client.keepAlivePeriod = 30;
     client.autoReconnect = true;
+    client.secure = isSecure;
     client.logging(on: false);
 
     client.onConnected = () {
@@ -161,7 +174,7 @@ class WasteConnectionService extends ChangeNotifier {
     _mqttClient = client;
 
     try {
-      await client.connect();
+      await client.connect(username, password);
       client.updates?.listen(_onMqttMessage);
     } catch (e) {
       _mqttConnected = false;
@@ -225,6 +238,10 @@ class WasteConnectionService extends ChangeNotifier {
     try {
       await device.connect(timeout: const Duration(seconds: 10));
       _bleDevice = device;
+
+      try {
+        await device.requestMtu(247);
+      } catch (_) {}
 
       _bleConnSub = device.connectionState.listen((state) {
         if (state == BluetoothConnectionState.disconnected) {

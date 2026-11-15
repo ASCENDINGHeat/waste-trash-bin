@@ -17,6 +17,7 @@ class _BleProvisionSheetState extends State<BleProvisionSheet> {
   final _ssidCtrl = TextEditingController();
   final _passCtrl = TextEditingController();
   final _mqttCtrl = TextEditingController();
+  final _tokenCtrl = TextEditingController();
   final _deviceIdCtrl = TextEditingController();
 
   List<ScanResult> _scanResults = [];
@@ -30,6 +31,24 @@ class _BleProvisionSheetState extends State<BleProvisionSheet> {
     _deviceIdCtrl.text = widget.service.activeDeviceId;
     if (widget.service.isBleConnected) {
       _loadCurrentBleConfig();
+    }
+  }
+
+  String _resolvedMqttUri() {
+    final rawUri = _mqttCtrl.text.trim();
+    final rawToken = _tokenCtrl.text.trim();
+    if (rawToken.isEmpty) return rawUri;
+
+    final cleanToken = rawToken.replaceFirst(RegExp(r'^FlespiToken\s+', caseSensitive: false), '');
+    final encodedToken = Uri.encodeComponent(cleanToken);
+    final normalized = rawUri.contains('://') ? rawUri : 'mqtt://$rawUri';
+    try {
+      final u = Uri.parse(normalized);
+      final host = u.host.isNotEmpty ? u.host : 'mqtt.flespi.io';
+      final port = u.hasPort ? u.port : 1883;
+      return '${u.scheme}://$encodedToken@$host:$port';
+    } catch (_) {
+      return 'mqtt://$encodedToken@mqtt.flespi.io:1883';
     }
   }
 
@@ -83,6 +102,7 @@ class _BleProvisionSheetState extends State<BleProvisionSheet> {
     _ssidCtrl.dispose();
     _passCtrl.dispose();
     _mqttCtrl.dispose();
+    _tokenCtrl.dispose();
     _deviceIdCtrl.dispose();
     super.dispose();
   }
@@ -123,18 +143,42 @@ class _BleProvisionSheetState extends State<BleProvisionSheet> {
                 const Divider(height: 28),
 
                 // 1. Phone MQTT Broker Connection
-                const Text(
-                  '1. MQTT Broker (LAN / Cloud Telemetry)',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text(
+                      '1. MQTT Broker (Flespi / LAN / Cloud)',
+                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                    ),
+                    TextButton.icon(
+                      icon: const Icon(Icons.bolt, size: 16),
+                      label: const Text('Flespi Preset'),
+                      onPressed: () {
+                        setState(() {
+                          _mqttCtrl.text = 'mqtt://mqtt.flespi.io:1883';
+                        });
+                      },
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 10),
+                const SizedBox(height: 8),
                 TextField(
                   controller: _mqttCtrl,
                   decoration: const InputDecoration(
                     labelText: 'MQTT Broker URI',
-                    hintText: 'mqtt://192.168.1.10:1883 or mqtt://broker.emqx.io:1883',
+                    hintText: 'mqtt://mqtt.flespi.io:1883 or mqtt://<TOKEN>@mqtt.flespi.io:1883',
                     border: OutlineInputBorder(),
                     prefixIcon: Icon(Icons.cloud_outlined),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: _tokenCtrl,
+                  decoration: const InputDecoration(
+                    labelText: 'Flespi Token / MQTT Username (Optional)',
+                    hintText: 'Paste FlespiToken here (auto-embeds into URI)',
+                    border: OutlineInputBorder(),
+                    prefixIcon: Icon(Icons.vpn_key_outlined),
                   ),
                 ),
                 const SizedBox(height: 10),
@@ -159,8 +203,10 @@ class _BleProvisionSheetState extends State<BleProvisionSheet> {
                             ? 'Reconnect MQTT'
                             : 'Connect MQTT'),
                         onPressed: () {
+                          final resolved = _resolvedMqttUri();
+                          _mqttCtrl.text = resolved;
                           widget.service.connectMqtt(
-                            brokerUri: _mqttCtrl.text,
+                            brokerUri: resolved,
                             deviceId: _deviceIdCtrl.text,
                           );
                         },
@@ -269,10 +315,12 @@ class _BleProvisionSheetState extends State<BleProvisionSheet> {
                     icon: const Icon(Icons.save_alt),
                     label: const Text('Write to ESP32-S3 NVS & Connect Wi-Fi'),
                     onPressed: () async {
+                      final resolved = _resolvedMqttUri();
+                      _mqttCtrl.text = resolved;
                       await widget.service.provisionOverBle(
                         wifiSsid: _ssidCtrl.text.trim(),
                         wifiPass: _passCtrl.text,
-                        mqttUri: _mqttCtrl.text.trim(),
+                        mqttUri: resolved,
                       );
                     },
                   ),
