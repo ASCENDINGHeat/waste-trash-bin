@@ -1,4 +1,4 @@
-menu "Smart Trash Bin Configuration (YD-ESP32-23 N16R8)"
+menu "W.A.S.T.E. Configuration (YD-ESP32-23 N16R8)"
 
     menu "GPIO Pin Assignments"
         config SMARTBIN_PIR_GPIO

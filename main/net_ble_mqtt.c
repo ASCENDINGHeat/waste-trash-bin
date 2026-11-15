@@ -38,6 +38,7 @@ static const char *TAG = "net_ble_mqtt";
  * MQTT URI: 0xFF03 (Read/Write)
  * APPLY:    0xFF04 (Write 0x01 to save & connect)
  * TELEM:    0xFF05 (Read/Notify JSON telemetry)
+ * CMD:      0xFF06 (Write JSON remote command: open_lid, measure_now, configure)
  */
 static const ble_uuid16_t s_svc_uuid        = BLE_UUID16_INIT(0xFF00);
 static const ble_uuid16_t s_chr_ssid_uuid   = BLE_UUID16_INIT(0xFF01);
@@ -45,6 +46,7 @@ static const ble_uuid16_t s_chr_pass_uuid   = BLE_UUID16_INIT(0xFF02);
 static const ble_uuid16_t s_chr_mqtt_uuid   = BLE_UUID16_INIT(0xFF03);
 static const ble_uuid16_t s_chr_apply_uuid  = BLE_UUID16_INIT(0xFF04);
 static const ble_uuid16_t s_chr_telem_uuid  = BLE_UUID16_INIT(0xFF05);
+static const ble_uuid16_t s_chr_cmd_uuid    = BLE_UUID16_INIT(0xFF06);
 
 static char s_device_id[32] = "smartbin_s3";
 static char s_topic_telemetry[64];
@@ -341,6 +343,13 @@ static int gatt_chr_access_cb(uint16_t conn_handle, uint16_t attr_handle,
             s_wifi_retry_count = 0;
             wifi_attempt_connect();
             return 0;
+        } else if (uuid16 == 0xFF06 && om_len > 0 && om_len < 256) {
+            char cmd_buf[256] = {0};
+            uint16_t copied = 0;
+            ble_hs_mbuf_to_flat(ctxt->om, cmd_buf, sizeof(cmd_buf) - 1, &copied);
+            ESP_LOGI(TAG, "BLE GATT received remote command JSON: %s", cmd_buf);
+            handle_mqtt_cmd_payload(cmd_buf, (int)copied);
+            return 0;
         }
     }
     return BLE_ATT_ERR_UNLIKELY;
@@ -376,6 +385,11 @@ static const struct ble_gatt_svc_def s_gatt_svcs[] = {
                 .access_cb = gatt_chr_access_cb,
                 .val_handle = &s_telem_val_handle,
                 .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_NOTIFY,
+            },
+            {
+                .uuid = &s_chr_cmd_uuid.u,
+                .access_cb = gatt_chr_access_cb,
+                .flags = BLE_GATT_CHR_F_WRITE,
             },
             {0}
         },

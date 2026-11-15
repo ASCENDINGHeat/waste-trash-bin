@@ -1,13 +1,16 @@
-# 02 — Functional Specification & Subsystem Design
+# 02 — W.A.S.T.E. Functional Specification & Subsystem Design
+
+> [!NOTE]
+> Functional specification and dual-core state machine design for **W.A.S.T.E.** (**Waste Automation and Sensing Technology Engine**).
 
 ## 1. Dual-Core Task Architecture (`ESP32-S3`)
 
-To guarantee that the **Chinese Dancing Cat GIF** on the OLED never drops frames during Wi-Fi connection retries, BLE advertising, servo ramping, or ultrasonic pulse measurement, the workload is partitioned across the two Xtensa LX7 cores:
+To guarantee that the **OLED GIF Animation** never drops frames during Wi-Fi connection retries, BLE advertising, servo ramping, or ultrasonic pulse measurement, **W.A.S.T.E.** partitions its workload across the two Xtensa LX7 cores:
 
 ```mermaid
 flowchart TD
-    subgraph Core0["Core 0: Smart Trash Bin FSM & Wireless Stack"]
-        PIR["HC-SR501 PIR (GPIO 2)"] -->|ISR / Event Queue| FSM["Trash Bin FSM Task"]
+    subgraph Core0["Core 0: W.A.S.T.E. Control FSM & Wireless Stack"]
+        PIR["HC-SR501 PIR (GPIO 2)"] -->|ISR / Event Queue| FSM["W.A.S.T.E. FSM Task"]
         TIMER["Periodic Check Timer (15m)"] -->|Timer Event| FSM
         FSM -->|Fast Open / Soft Close + Auto-Detach| SERVO["SG90 Servo LEDC (GPIO 21)"]
         FSM -->|5-Ping Median Filter| ULTRA["HC-SR04 Ultrasonic (TRIG: 5, ECHO: 18)"]

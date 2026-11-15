@@ -1,4 +1,7 @@
-# 01 — Hardware & Pinout Reference (`YD-ESP32-23` / `ESP32-S3 N16R8`)
+# 01 — W.A.S.T.E. Hardware & Pinout Reference (`YD-ESP32-23` / `ESP32-S3 N16R8`)
+
+> [!NOTE]
+> Hardware architecture and pin assignment reference for **W.A.S.T.E.** (**Waste Automation and Sensing Technology Engine**).
 
 ## 1. MCU & Development Board Overview
 - **Board Model / Silkscreen**: `YD-ESP32-23` (VCC-GND Studio `YD-ESP32-S3` clone, 44-pin `ESP32-S3-DevKitC-1` form factor)

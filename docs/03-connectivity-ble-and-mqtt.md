@@ -1,8 +1,8 @@
-# 03 — Connectivity: BLE Setup/Failover & MQTT Protocol
+# 03 — W.A.S.T.E. Connectivity: BLE Setup/Failover & MQTT Protocol
 
 ## 1. Network Lifecycle & Automatic BLE Failover
 
-The system uses a unified **Network Manager** that coordinates **Wi-Fi STA**, **NimBLE (Bluetooth Low Energy)**, and **MQTT (`esp-mqtt`)**:
+**W.A.S.T.E.** (**Waste Automation and Sensing Technology Engine**) uses a unified **Network Manager** that coordinates **Wi-Fi STA**, **NimBLE (Bluetooth Low Energy)**, and **MQTT (`esp-mqtt`)**:
 
 ```mermaid
 stateDiagram-v2
@@ -37,7 +37,8 @@ Provides both **Configuration (Provisioning)** and **Live Offline Telemetry**:
 | **Wi-Fi Password** | `0xFF02` | `Write` | UTF-8 string (max 64 bytes) — stored in NVS |
 | **MQTT Broker URI** | `0xFF03` | `Read`, `Write` | UTF-8 string (e.g. `mqtt://192.168.1.10:1883`) — stored in NVS |
 | **Apply & Connect** | `0xFF04` | `Write` | Write `0x01` to save to NVS and trigger immediate Wi-Fi connection attempt |
-| **Live Bin Telemetry** | `0xFF05` | `Read`, `Notify` | JSON or compact struct (`fill_percent`, `distance_cm`, `lid_state`, `open_cycles`) so the user's phone can monitor the trash bin over BLE even when Wi-Fi is down! |
+| **Live Bin Telemetry** | `0xFF05` | `Read`, `Notify` | JSON (`fill_percent`, `distance_cm`, `lid_state`, `open_cycles`) so the user's phone can monitor the trash bin over BLE even when Wi-Fi is down! |
+| **Remote Command JSON** | `0xFF06` | `Write` | Accepts the same JSON command payloads as `smartbin/<id>/cmd` (`open_lid`, `measure_now`, `configure`) directly over BLE! |
 
 ---
 

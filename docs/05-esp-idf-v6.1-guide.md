@@ -1,7 +1,7 @@
-# 05 — ESP-IDF `^6.1` Build System, Drivers & Environment Guide
+# 05 — W.A.S.T.E. ESP-IDF `^6.1` Build System, Drivers & Flashing Guide
 
 > [!IMPORTANT]
-> This project targets **ESP-IDF `^6.1`** (`v6.1.x`). ESP-IDF v6.x introduces major architectural changes compared to v5.x, including CMake $\ge 3.22.1$, modularized `esp_driver_*` components, Picolibc as the default C library, and extracted managed components.
+> **W.A.S.T.E.** (**Waste Automation and Sensing Technology Engine**) targets **ESP-IDF `^6.1`** (`v6.1` Stable). ESP-IDF v6.x introduces CMake $\ge 3.22.1$, modularized `esp_driver_*` components, Picolibc as the default C library, and extracted managed components (`espressif/mqtt`, `espressif/cjson`, `espressif/led_strip`).
 
 ---
 

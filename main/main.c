@@ -25,7 +25,7 @@ static void on_remote_config_updated(const smartbin_config_t *new_cfg)
 
 void app_main(void)
 {
-    ESP_LOGI(TAG, "=== ESP32-S3 Smart Trash Bin + OLED Dancing Cat (ESP-IDF ^6.1) ===");
+    ESP_LOGI(TAG, "=== W.A.S.T.E. (Waste Automation and Sensing Technology Engine) | ESP-IDF v6.1 ===");
 
     /* 1. Initialize NVS Flash and load persisted configuration */
     esp_err_t ret = nvs_flash_init();
