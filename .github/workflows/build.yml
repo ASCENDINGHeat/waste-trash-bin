@@ -2,7 +2,7 @@ name: Build W.A.S.T.E. Firmware (ESP-IDF v6.1)
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "main", "staging", "dev" ]
     paths:
       - 'main/**'
       - 'CMakeLists.txt'
@@ -10,7 +10,7 @@ on:
       - 'partitions.csv'
       - '.github/workflows/build.yml'
   pull_request:
-    branches: [ "main" ]
+    branches: [ "main", "staging", "dev" ]
     paths:
       - 'main/**'
       - 'CMakeLists.txt'
@@ -18,6 +18,10 @@ on:
       - 'partitions.csv'
       - '.github/workflows/build.yml'
   workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build-firmware:
@@ -29,6 +33,17 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Resolve Branch Artifact Suffix
+        id: meta
+        shell: bash
+        run: |
+          if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
+            RAW_ENV="pr-${{ github.event.pull_request.number }}-${{ github.base_ref }}"
+          else
+            RAW_ENV="${GITHUB_REF_NAME}"
+          fi
+          echo "env_slug=${RAW_ENV//\//-}" >> "$GITHUB_OUTPUT"
 
       - name: Configure and Build ESP-IDF Firmware
         shell: bash
@@ -44,7 +59,7 @@ jobs:
       - name: Upload Firmware Binaries
         uses: actions/upload-artifact@v4
         with:
-          name: waste-esp32s3-firmware
+          name: waste-esp32s3-firmware-${{ steps.meta.outputs.env_slug }}
           path: |
             build/waste_firmware_merged.bin
             build/waste_firmware.bin

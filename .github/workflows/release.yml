@@ -7,12 +7,15 @@ on:
   workflow_dispatch:
     inputs:
       tag_name:
-        description: 'Release tag (e.g. v1.1.0)'
+        description: 'Release tag (e.g. v1.2.0 or v1.2.0-rc.1)'
         required: true
-        default: 'v1.1.0'
+        default: 'v1.2.0-rc.1'
 
 permissions:
   contents: write
+
+env:
+  RELEASE_TAG: ${{ github.event.inputs.tag_name || github.ref_name }}
 
 jobs:
   build-firmware:
@@ -32,8 +35,8 @@ jobs:
           . /opt/esp/idf/export.sh
           idf.py set-target esp32s3
           idf.py build
-          (cd build && esptool.py --chip esp32s3 merge_bin -o waste-firmware-${GITHUB_REF_NAME}-merged.bin @flash_args)
-          cp build/waste_firmware.bin build/waste-firmware-${GITHUB_REF_NAME}.bin
+          (cd build && esptool.py --chip esp32s3 merge_bin -o waste-firmware-${RELEASE_TAG}-merged.bin @flash_args)
+          cp build/waste_firmware.bin build/waste-firmware-${RELEASE_TAG}.bin
 
       - name: Upload Firmware Artifact
         uses: actions/upload-artifact@v4
@@ -72,7 +75,7 @@ jobs:
           flutter pub get
           flutter test
           flutter build apk --release
-          cp build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/waste-companion-${GITHUB_REF_NAME}.apk
+          cp build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/waste-companion-${RELEASE_TAG}.apk
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
@@ -98,12 +101,12 @@ jobs:
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name }}
-          name: "W.A.S.T.E. ${{ github.ref_name }} — Firmware & Companion App"
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: "W.A.S.T.E. ${{ env.RELEASE_TAG }} — Firmware & Companion App"
           body_path: CHANGELOG.md
           files: |
             release-assets/waste-firmware-*-merged.bin
             release-assets/waste-firmware-*.bin
             release-assets/waste-companion-*.apk
           draft: false
-          prerelease: false
+          prerelease: ${{ contains(env.RELEASE_TAG, '-') }}

@@ -2,16 +2,20 @@ name: Build W.A.S.T.E. Companion App (Flutter APK)
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "main", "staging", "dev" ]
     paths:
       - 'companion_app/**'
       - '.github/workflows/build-app.yml'
   pull_request:
-    branches: [ "main" ]
+    branches: [ "main", "staging", "dev" ]
     paths:
       - 'companion_app/**'
       - '.github/workflows/build-app.yml'
   workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build-companion-app:
@@ -21,6 +25,17 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Resolve Branch Artifact Suffix
+        id: meta
+        shell: bash
+        run: |
+          if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
+            RAW_ENV="pr-${{ github.event.pull_request.number }}-${{ github.base_ref }}"
+          else
+            RAW_ENV="${GITHUB_REF_NAME}"
+          fi
+          echo "env_slug=${RAW_ENV//\//-}" >> "$GITHUB_OUTPUT"
 
       - name: Set up Java 17
         uses: actions/setup-java@v4
@@ -48,6 +63,6 @@ jobs:
       - name: Upload Companion App APK
         uses: actions/upload-artifact@v4
         with:
-          name: waste-companion-apk
+          name: waste-companion-apk-${{ steps.meta.outputs.env_slug }}
           path: companion_app/build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error

@@ -94,7 +94,7 @@ waste-trash-bin/
 1. **From GitHub Releases (Recommended)**:
    - Open **[Releases (`v1.1.0`)](https://github.com/ASCENDINGHeat/waste-trash-bin/releases/tag/v1.1.0)** and download **`waste-firmware-v1.1.0-merged.bin`** (and **`waste-companion-v1.1.0.apk`** for Android).
 2. **From GitHub Actions (Latest Commit)**:
-   - Open **[GitHub Actions](https://github.com/ASCENDINGHeat/waste-trash-bin/actions)** $\rightarrow$ select the latest workflow run and download **`waste-esp32s3-firmware.zip`**.
+   - Open **[GitHub Actions](https://github.com/ASCENDINGHeat/waste-trash-bin/actions)** $\rightarrow$ select the latest workflow run and download **`waste-esp32s3-firmware-<branch>.zip`** (for example `waste-esp32s3-firmware-main.zip`, `-staging.zip`, or `-dev.zip`).
    - Extract the zip to get **`waste_firmware_merged.bin`** (all-in-one Bootloader + Partition Table + Application image for offset **`0x0`**), or individual binaries (`bootloader.bin` at `0x0`, `partition-table.bin` at `0x8000`, `waste_firmware.bin` at `0x10000`).
 
 ### 3.2 Entering Download Mode on `YD-ESP32-23`
@@ -126,7 +126,28 @@ esptool.py --chip esp32s3 --port /dev/ttyACM0 --baud 460800 write_flash 0x0 wast
 
 ---
 
-## 4. Git & SSH Remote Reference (Device Environment)
+## 4. Branching & CI/CD Promotion Strategy (`dev` $\rightarrow$ `staging` $\rightarrow$ `main`)
+
+The repository uses a three-tier branching model backed by path-filtered GitHub Actions workflows:
+
+```mermaid
+flowchart LR
+    FEAT["Feature Branches"] -->|"PR / Merge"| DEV["dev (Active Development)"]
+    DEV -->|"PR / Merge"| STG["staging (Hardware QA & Soak Test)"]
+    STG -->|"PR / Merge"| MAIN["main (Production Stable)"]
+    STG -.->|"Tag vX.Y.Z-rc.N"| PRE["GitHub Pre-Release"]
+    MAIN -.->|"Tag vX.Y.Z"| REL["GitHub Production Release"]
+```
+
+| Branch | Purpose | CI Workflows Triggered | Artifact Suffix | Release Behavior |
+| :--- | :--- | :--- | :--- | :--- |
+| **`dev`** | Active feature integration (firmware & Flutter UI) | `build.yml`, `build-app.yml` | `-dev` | CI artifacts only |
+| **`staging`** | Pre-release candidate soak testing on `YD-ESP32-23` | `build.yml`, `build-app.yml` | `-staging` | Tags with `-` (e.g. `v1.2.0-rc.1`) publish a **Pre-Release** |
+| **`main`** | Stable production branch | `build.yml`, `build-app.yml` | `-main` | Clean tags (e.g. `v1.2.0`) publish a **Production Release** |
+
+---
+
+## 5. Git & SSH Remote Reference (Device Environment)
 
 - **Repository Location**: `/storage/emulated/0/projects/esp-idf-project`
 - **Remote (`origin`)**: `git@github.com:ASCENDINGHeat/waste-trash-bin.git`
@@ -137,5 +158,5 @@ esptool.py --chip esp32s3 --port /dev/ttyACM0 --baud 460800 write_flash 0x0 wast
   export PATH="/data/user/0/com.agy/files/usr/bin:$PATH"
   export HOME="/data/user/0/com.agy/files"
   export GIT_CONFIG_NOSYSTEM=1
-  git -C "/storage/emulated/0/projects/esp-idf-project" push origin main
+  git -C "/storage/emulated/0/projects/esp-idf-project" push origin dev staging main
   ```
