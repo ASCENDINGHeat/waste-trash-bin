@@ -12,7 +12,7 @@ Root `CMakeLists.txt` must specify at least CMake `3.22.1`:
 ```cmake
 cmake_minimum_required(VERSION 3.22.1)
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
-project(esp_idf_project)
+project(waste_firmware)
 ```
 
 ### 1.2 Granular Peripheral Driver Components (`esp_driver_*`)
@@ -53,11 +53,11 @@ dependencies:
 
 ```text
 waste-trash-bin/
-├── CMakeLists.txt                       # Root CMake (requires >= 3.22.1)
+├── CMakeLists.txt                       # Root CMake (requires >= 3.22.1, project(waste_firmware))
 ├── sdkconfig.defaults                   # ESP32-S3 N16R8 + NimBLE + Power Management defaults
 ├── partitions.csv                       # Custom 16 MB Flash partition table (2 MB factory app)
 ├── README.md                            # W.A.S.T.E. product overview, architecture & quick start
-├── CHANGELOG.md                         # Release history (v1.0.0 Initial Release)
+├── CHANGELOG.md                         # Release history (v1.1.0 & v1.0.0)
 ├── .github/workflows/
 │   ├── build.yml                        # Path-filtered ESP-IDF v6.1 firmware CI workflow
 │   ├── build-app.yml                    # Path-filtered Flutter Companion APK & test CI workflow
@@ -69,7 +69,7 @@ waste-trash-bin/
 ├── tools/                               # Custom GIF-to-OLED 128x64 1-bit C header converters
 │   ├── gif_to_oled.mjs                  # Zero-dependency Node.js GIF decoder + Atkinson ditherer
 │   └── gif_to_oled.py                   # Python Pillow GIF converter
-├── docs/                                # Complete project documentation suite (01 through 06)
+├── docs/                                # Complete project documentation suite (01 through 07)
 └── main/
     ├── CMakeLists.txt                   # Explicit esp_driver_* component registration
     ├── idf_component.yml                # IDF Component Manager manifest (cjson, led_strip, mqtt)
@@ -90,12 +90,12 @@ waste-trash-bin/
 
 ## 3. Flashing the Compiled Firmware (`YD-ESP32-23` / `ESP32-S3 N16R8`)
 
-### 3.1 Download Binary from GitHub Releases (`v1.0.0`) or Actions
+### 3.1 Download Binary from GitHub Releases (`v1.1.0`) or Actions
 1. **From GitHub Releases (Recommended)**:
-   - Open **[Releases (`v1.0.0`)](https://github.com/ASCENDINGHeat/waste-trash-bin/releases/tag/v1.0.0)** and download **`esp_trash_bin_merged.bin`** (and **`waste-companion-v1.0.0.apk`** for Android).
+   - Open **[Releases (`v1.1.0`)](https://github.com/ASCENDINGHeat/waste-trash-bin/releases/tag/v1.1.0)** and download **`waste-firmware-v1.1.0-merged.bin`** (and **`waste-companion-v1.1.0.apk`** for Android).
 2. **From GitHub Actions (Latest Commit)**:
-   - Open **[GitHub Actions](https://github.com/ASCENDINGHeat/waste-trash-bin/actions)** $\rightarrow$ select the latest workflow run and download **`esp32s3-trash-bin-firmware.zip`**.
-   - Extract the zip to get **`esp_trash_bin_merged.bin`** (all-in-one Bootloader + Partition Table + Application image for offset **`0x0`**), or individual binaries (`bootloader.bin` at `0x0`, `partition-table.bin` at `0x8000`, `esp_trash_bin.bin` at `0x10000`).
+   - Open **[GitHub Actions](https://github.com/ASCENDINGHeat/waste-trash-bin/actions)** $\rightarrow$ select the latest workflow run and download **`waste-esp32s3-firmware.zip`**.
+   - Extract the zip to get **`waste_firmware_merged.bin`** (all-in-one Bootloader + Partition Table + Application image for offset **`0x0`**), or individual binaries (`bootloader.bin` at `0x0`, `partition-table.bin` at `0x8000`, `waste_firmware.bin` at `0x10000`).
 
 ### 3.2 Entering Download Mode on `YD-ESP32-23`
 - **Via `COM` (`UART`) USB-C Port (`CH343P`)**: Supports automatic bootloader entry via `DTR`/`RTS`.
@@ -107,21 +107,21 @@ waste-trash-bin/
 ### 3.3 Option A — Flash via Browser (No Software Install, Chrome / Edge)
 1. Open **[Espressif ESPTool-JS Web Flasher](https://espressif.github.io/esptool-js/)**.
 2. Connect the `YD-ESP32-23` via USB-C and click **Connect** (baudrate `460800` or `115200`).
-3. Set **Flash Address** to **`0x0`** and select **`esp_trash_bin_merged.bin`**.
+3. Set **Flash Address** to **`0x0`** and select **`waste-firmware-v1.1.0-merged.bin`**.
 4. Click **Program**, then press **`RST`** on the board when finished.
 
 ### 3.4 Option B — Flash from Android Phone via USB-C OTG Cable
 1. Connect your phone to the `YD-ESP32-23` (`USB` or `COM` port) using a USB-C to USB-C OTG cable and put the board into Download Mode (`Hold BOOT -> Tap RST -> Release BOOT`).
 2. Use an Android ESP flasher app such as **ESPLoader** or **ZFlasher AVR/ESP**:
    - Chip: **`ESP32-S3`**
-   - File: **`esp_trash_bin_merged.bin`**
+   - File: **`waste-firmware-v1.1.0-merged.bin`**
    - Address / Offset: **`0x0`** (`0x00000000`)
 3. Tap **Flash**, then press the **`RST`** button on the board.
 
 ### 3.5 Option C — Command Line (`esptool.py` on PC / Mac / Linux)
 ```bash
 # Flash the single merged image at 0x0:
-esptool.py --chip esp32s3 --port /dev/ttyACM0 --baud 460800 write_flash 0x0 esp_trash_bin_merged.bin
+esptool.py --chip esp32s3 --port /dev/ttyACM0 --baud 460800 write_flash 0x0 waste-firmware-v1.1.0-merged.bin
 ```
 
 ---

@@ -7,9 +7,9 @@ on:
   workflow_dispatch:
     inputs:
       tag_name:
-        description: 'Release tag (e.g. v1.0.0)'
+        description: 'Release tag (e.g. v1.1.0)'
         required: true
-        default: 'v1.0.0'
+        default: 'v1.1.0'
 
 permissions:
   contents: write
@@ -25,22 +25,23 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Compile ESP32-S3 Merged Binary
+      - name: Compile ESP32-S3 W.A.S.T.E. Binaries
         shell: bash
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           . /opt/esp/idf/export.sh
           idf.py set-target esp32s3
           idf.py build
-          (cd build && esptool.py --chip esp32s3 merge_bin -o esp_trash_bin_merged.bin @flash_args)
+          (cd build && esptool.py --chip esp32s3 merge_bin -o waste-firmware-${GITHUB_REF_NAME}-merged.bin @flash_args)
+          cp build/waste_firmware.bin build/waste-firmware-${GITHUB_REF_NAME}.bin
 
       - name: Upload Firmware Artifact
         uses: actions/upload-artifact@v4
         with:
           name: release-firmware
           path: |
-            build/esp_trash_bin_merged.bin
-            build/esp_trash_bin.bin
+            build/waste-firmware-*-merged.bin
+            build/waste-firmware-*.bin
 
   build-apk:
     name: Build Release Android APK (Flutter)
@@ -101,8 +102,8 @@ jobs:
           name: "W.A.S.T.E. ${{ github.ref_name }} — Firmware & Companion App"
           body_path: CHANGELOG.md
           files: |
-            release-assets/esp_trash_bin_merged.bin
-            release-assets/esp_trash_bin.bin
+            release-assets/waste-firmware-*-merged.bin
+            release-assets/waste-firmware-*.bin
             release-assets/waste-companion-*.apk
           draft: false
           prerelease: false

@@ -5,7 +5,7 @@
 
 *Next-Generation Dual-Core IoT Smart Receptacle Firmware & Flutter Companion Ecosystem for ESP32-S3 (`N16R8`)*
 
-[![Release v1.0.0](https://img.shields.io/badge/Release-v1.0.0-brightgreen?logo=github)](https://github.com/ASCENDINGHeat/waste-trash-bin/releases/tag/v1.0.0)
+[![Release v1.1.0](https://img.shields.io/badge/Release-v1.1.0-brightgreen?logo=github)](https://github.com/ASCENDINGHeat/waste-trash-bin/releases/tag/v1.1.0)
 [![ESP-IDF v6.1](https://img.shields.io/badge/ESP--IDF-v6.1%20Stable-red?logo=espressif)](https://github.com/espressif/esp-idf)
 [![MCU](https://img.shields.io/badge/MCU-ESP32--S3%20N16R8-blue?logo=espressif)](./docs/01-hardware-and-pinout.md)
 [![Flutter App](https://img.shields.io/badge/Companion%20App-Flutter%203.x-02569B?logo=flutter)](./docs/06-flutter-companion-app.md)
@@ -98,17 +98,17 @@ flowchart TD
 
 ---
 
-## Quick Start & Installation (`v1.0.0` Release)
+## Quick Start & Installation (`v1.1.0` Release)
 
-### Option 1 — Download Pre-Built Firmware & Android APK from [GitHub Releases (`v1.0.0`)](https://github.com/ASCENDINGHeat/waste-trash-bin/releases/tag/v1.0.0)
-1. Download **`esp_trash_bin_merged.bin`** and **`waste-companion-v1.0.0.apk`** from the **[Releases Page](https://github.com/ASCENDINGHeat/waste-trash-bin/releases/latest)** (or from the latest **[GitHub Actions run](https://github.com/ASCENDINGHeat/waste-trash-bin/actions)**).
-2. Install **`waste-companion-v1.0.0.apk`** on your Android device.
-3. Flash **`esp_trash_bin_merged.bin`** to your `YD-ESP32-23` (`ESP32-S3`) at address **`0x0`** using:
+### Option 1 — Download Pre-Built Firmware & Android APK from [GitHub Releases (`v1.1.0`)](https://github.com/ASCENDINGHeat/waste-trash-bin/releases/tag/v1.1.0)
+1. Download **`waste-firmware-v1.1.0-merged.bin`** and **`waste-companion-v1.1.0.apk`** from the **[Releases Page](https://github.com/ASCENDINGHeat/waste-trash-bin/releases/latest)** (or from the latest **[GitHub Actions run](https://github.com/ASCENDINGHeat/waste-trash-bin/actions)**).
+2. Install **`waste-companion-v1.1.0.apk`** on your Android device.
+3. Flash **`waste-firmware-v1.1.0-merged.bin`** to your `YD-ESP32-23` (`ESP32-S3`) at address **`0x0`** using:
    - **Browser**: [Espressif ESPTool-JS Web Flasher](https://espressif.github.io/esptool-js/)
    - **Android (USB-C OTG)**: **ZFlasher AVR/ESP** or **ESPLoader** (`ESP32-S3`, offset `0x0`)
    - **CLI (`esptool.py`)**:
      ```bash
-     esptool.py --chip esp32s3 --port /dev/ttyACM0 --baud 460800 write_flash 0x0 esp_trash_bin_merged.bin
+     esptool.py --chip esp32s3 --port /dev/ttyACM0 --baud 460800 write_flash 0x0 waste-firmware-v1.1.0-merged.bin
      ```
 
 ### Option 2 — Build Firmware & Companion App Locally

@@ -1,7 +1,7 @@
 name: waste_companion
 description: W.A.S.T.E. (Waste Automation and Sensing Technology Engine) Flutter Companion App — MQTT & BLE GATT Dual-Transport Dashboard, Provisioning, and Remote Control.
 publish_to: 'none'
-version: 1.0.0+1
+version: 1.1.0+2
 
 environment:
   sdk: '>=3.3.0 <4.0.0'

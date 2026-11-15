@@ -38,17 +38,17 @@ jobs:
           idf.py --version
           idf.py set-target esp32s3
           idf.py build
-          (cd build && esptool.py --chip esp32s3 merge_bin -o esp_trash_bin_merged.bin @flash_args)
+          (cd build && esptool.py --chip esp32s3 merge_bin -o waste_firmware_merged.bin @flash_args)
           ls -lh build/*.bin build/bootloader/*.bin build/partition_table/*.bin
 
       - name: Upload Firmware Binaries
         uses: actions/upload-artifact@v4
         with:
-          name: esp32s3-trash-bin-firmware
+          name: waste-esp32s3-firmware
           path: |
-            build/esp_trash_bin_merged.bin
-            build/esp_trash_bin.bin
-            build/esp_trash_bin.elf
+            build/waste_firmware_merged.bin
+            build/waste_firmware.bin
+            build/waste_firmware.elf
             build/bootloader/bootloader.bin
             build/partition_table/partition-table.bin
             build/flash_args

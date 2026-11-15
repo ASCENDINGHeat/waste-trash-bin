@@ -4,6 +4,25 @@ All notable changes to **W.A.S.T.E.** (**W**aste **A**utomation and **S**ensing 
 
 ---
 
+## [v1.1.0] — Release Asset Rebranding & Smart OLED HUD Specification
+
+### Release Assets (`v1.1.0`)
+- **`waste-firmware-v1.1.0-merged.bin`**: All-in-one merged ESP32-S3 (`N16R8`) image (Bootloader + Partition Table + Application) for flashing at offset **`0x0`**.
+- **`waste-firmware-v1.1.0.bin`**: Standalone application partition image for offset **`0x10000`**.
+- **`waste-companion-v1.1.0.apk`**: Android Release APK for the **W.A.S.T.E. Flutter Companion App** (`v1.1.0+2`).
+
+### Changes & Additions
+- **Unified W.A.S.T.E. Binary & Artifact Naming**:
+  - Renamed root CMake target in [`CMakeLists.txt`](./CMakeLists.txt) to `waste_firmware` (`waste_firmware_merged.bin`, `waste_firmware.bin`, `waste_firmware.elf`).
+  - Updated GitHub Actions artifact name to `waste-esp32s3-firmware` and release assets to `waste-firmware-<tag>-merged.bin`, `waste-firmware-<tag>.bin`, and `waste-companion-<tag>.apk`.
+  - Updated repository URLs across all documentation to `ASCENDINGHeat/waste-trash-bin`.
+- **Smart OLED HUD, Boot Animation & Warning Modal Specification ([`docs/07-smart-oled-hud-and-ui.md`](./docs/07-smart-oled-hud-and-ui.md))**:
+  - Specified the 6-mode **Core 1** $128 \times 64$ OLED HUD compositor (`SCREEN_BOOT_SPLASH`, `SCREEN_IDLE_HUD`, `SCREEN_LID_ACTIVE`, `SCREEN_MEASURING`, `SCREEN_FULL_ALERT`, `SCREEN_BLE_SETUP`), floating **Warning Popup Modal** overlay, and user-uploadable **`.wbin` Custom Animation** format.
+- **Tri-Mode Connectivity Roadmap ([`docs/03-connectivity-ble-and-mqtt.md`](./docs/03-connectivity-ble-and-mqtt.md))**:
+  - Documented the `BLE + LAN + MQTT` automatic transport router for `< 0.3s` local LAN `.wbin` animation uploads and zero-latency control.
+
+---
+
 ## [v1.0.0] — Initial Release
 
 ### ESP32-S3 Firmware (`ESP-IDF v6.1` — `YD-ESP32-23` `N16R8`)
@@ -28,10 +47,3 @@ All notable changes to **W.A.S.T.E.** (**W**aste **A**utomation and **S**ensing 
 - **Dual-Transport Connection Service (`waste_connection_service.dart`)**: Seamless switching between **MQTT `v3.1.1`** (with native **Flespi Token** authentication & TLS support) and **BLE GATT (`0xFF00`–`0xFF06`)** with `247`-byte MTU negotiation, plus a 500-event phone-side persistent telemetry history log.
 - **BLE Provisioning & Calibration Modals (`ble_provision_sheet.dart`, `calibration_sheet.dart`)**: 1-tap **Flespi Preset**, BLE scanner, NVS credential writer, and live ultrasonic depth/timer calibration.
 - **Automated Unit & Widget Test Suite (`test/widget_test.dart`)**: Tests JSON telemetry parsing, boundary clamping, command serialization, `SharedPreferences` history persistence, and dashboard/modal rendering.
-
-### Tooling & CI/CD
-- **GIF-to-OLED Converters (`tools/gif_to_oled.mjs`, `tools/gif_to_oled.py`)**: Convert any `.gif` into a 1-bit $128 \times 64$ SSD1306 vertical page C header with Atkinson error-diffusion dithering.
-- **Path-Filtered GitHub Actions & Automated Releases (`.github/workflows/`)**:
-  - `build.yml`: Compiles ESP-IDF `v6.1` firmware on firmware changes.
-  - `build-app.yml`: Runs `flutter analyze`, `flutter test`, and builds the Android APK on `companion_app/` changes.
-  - `release.yml`: Publishes `esp_trash_bin_merged.bin`, `esp_trash_bin.bin`, and `waste-companion-<tag>.apk` directly to GitHub Releases on `v*` tags.
