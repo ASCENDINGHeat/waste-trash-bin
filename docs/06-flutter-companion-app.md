@@ -98,9 +98,32 @@ companion_app/
 1. Open the **[GitHub Releases (`v1.1.0`)](https://github.com/ASCENDINGHeat/waste-trash-bin/releases/tag/v1.1.0)** page (or the **[Build Companion App workflow](https://github.com/ASCENDINGHeat/waste-trash-bin/actions/workflows/build-app.yml)**).
 2. Download **`waste-companion-v1.1.0.apk`** and install it on your Android device.
 
-### Option 2 — Run Tests & Build Locally with Flutter SDK
+### Option 2 — Persistent Release Signing & In-Place Updates
+
+To ensure every future APK build (`dev`, `staging`, `main`, and GitHub Releases) can be installed directly as an **in-place Update** (keeping your saved MQTT broker URI and 500-event history without uninstalling first), all release APKs must share the same **Application ID** (`com.ascendingheat.waste.waste_companion`), an increasing **`versionCode`** in [`pubspec.yaml`](../companion_app/pubspec.yaml), and the same **persistent release keystore**:
+
+1. **Generate a persistent keystore once** (PC/Mac/Linux or Termux with OpenJDK):
+   ```bash
+   keytool -genkeypair -v -keystore waste-release.jks -storetype PKCS12 \
+     -keyalg RSA -keysize 2048 -validity 10000 -alias waste_release
+   ```
+2. **Add GitHub Repository Secrets** (`Settings -> Secrets and variables -> Actions -> New repository secret`):
+   | Secret Name | Value |
+   | :--- | :--- |
+   | `ANDROID_KEYSTORE_BASE64` | Single-line Base64 of `waste-release.jks` (`base64 -w 0 waste-release.jks` on Linux or `base64 -i waste-release.jks \| tr -d '\n'` on macOS) |
+   | `ANDROID_KEYSTORE_PASSWORD` | Keystore password chosen in Step 1 |
+   | `ANDROID_KEY_ALIAS` | `waste_release` |
+   | `ANDROID_KEY_PASSWORD` | Key password *(optional if identical to keystore password for PKCS12)* |
+3. **CI Automatic Signing**: [`build-app.yml`](../.github/workflows/build-app.yml) and [`release.yml`](../.github/workflows/release.yml) run [`configure_android_signing.mjs`](../companion_app/scripts/configure_android_signing.mjs) after `flutter create` to configure `key.properties` and Gradle `release` signing automatically.
+   > [!NOTE]
+   > If you previously installed a debug-signed APK from before configuring `ANDROID_KEYSTORE_BASE64`, uninstall it **once** before installing the first persistently signed APK. All subsequent updates with the same keystore and bumped `versionCode` will upgrade cleanly in place.
+
+### Option 3 — Run Tests & Build Locally with Flutter SDK
 ```bash
 cd companion_app
+# Optional: place waste-release.jks in android/app/ and create android/key.properties
+flutter create --platforms=android --org com.ascendingheat.waste --project-name waste_companion .
+node scripts/configure_android_signing.mjs
 flutter pub get
 flutter test
 flutter build apk --release

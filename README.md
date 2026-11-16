@@ -149,5 +149,6 @@ All engineering specifications, state machines, protocols, and power analyses ar
 | **[docs/04-power-management-and-battery.md](./docs/04-power-management-and-battery.md)** | 1000 mAh Battery Runtime Analysis ($5.5\text{ hrs} \rightarrow 22\text{ days}$), Sleep Modes & Flash Endurance |
 | **[docs/05-esp-idf-v6.1-guide.md](./docs/05-esp-idf-v6.1-guide.md)** | ESP-IDF `v6.1` Modular Drivers, Managed Components, CI/CD & Flashing Guide |
 | **[docs/06-flutter-companion-app.md](./docs/06-flutter-companion-app.md)** | W.A.S.T.E. Flutter Companion App Architecture, Dual MQTT/BLE Transport, Unit Tests & APK Build |
-| **[docs/07-smart-oled-hud-and-ui.md](./docs/07-smart-oled-hud-and-ui.md)** | Core 1 Smart OLED HUD & Context-Aware UI Modes (`IDLE_HUD`, `LID_ACTIVE`, `MEASURING`, `FULL_ALERT`, `BLE_SETUP`) |
-| **[CHANGELOG.md](./CHANGELOG.md)** | Release History & `v1.0.0` Initial Release Notes |
+| **[docs/07-smart-oled-hud-and-ui.md](./docs/07-smart-oled-hud-and-ui.md)** | Core 1 Smart OLED HUD, Boot Splash, Warning Popup Modal & `.wbin` Upload Specification |
+| **[docs/08-feature-status-and-gap-analysis.md](./docs/08-feature-status-and-gap-analysis.md)** | Feature Tracking Matrix & Documentation-vs-Code Gap Analysis (`Live` vs `Planned`) |
+| **[CHANGELOG.md](./CHANGELOG.md)** | Release History (`v1.1.0` & `v1.0.0` Release Notes) |
