@@ -228,14 +228,14 @@ void main() {
       expect(frame.previewRgba.length, 128 * 64 * 4);
 
       // Pixel (10, 17) in RGBA preview should be white (255, 255, 255, 255)
-      final pIdx = (17 * 128 + 10) * 4;
+      const pIdx = (17 * 128 + 10) * 4;
       expect(frame.previewRgba[pIdx], 0xFF);     // R
       expect(frame.previewRgba[pIdx + 1], 0xFF); // G
       expect(frame.previewRgba[pIdx + 2], 0xFF); // B
       expect(frame.previewRgba[pIdx + 3], 0xFF); // A
 
       // Pixel (10, 16) should be off (0, 0, 0, 255)
-      final offIdx = (16 * 128 + 10) * 4;
+      const offIdx = (16 * 128 + 10) * 4;
       expect(frame.previewRgba[offIdx], 0x00);
       expect(frame.previewRgba[offIdx + 1], 0x00);
     });
@@ -273,7 +273,7 @@ void main() {
       expect(WbinEncoder.verifyCrc32(corrupted), isFalse);
 
       // Truncated payload
-      final truncated = Uint8List.sublist(valid, 0, valid.length - 100);
+      final truncated = valid.sublist(0, valid.length - 100);
       expect(() => WbinEncoder.parseHeader(truncated), throwsFormatException);
     });
 
@@ -441,6 +441,8 @@ void main() {
       // Tap Reset button
       final resetFinder = find.byKey(const Key('reset_anim_button'));
       expect(resetFinder, findsOneWidget);
+      await tester.ensureVisible(resetFinder);
+      await tester.pumpAndSettle();
       await tester.tap(resetFinder);
       await tester.pumpAndSettle();
     });

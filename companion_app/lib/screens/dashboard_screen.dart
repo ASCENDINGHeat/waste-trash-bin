@@ -334,7 +334,6 @@ class DashboardScreen extends StatelessWidget {
         color = Colors.lightBlueAccent;
         break;
       case TransportMode.disconnected:
-      default:
         label = 'SETUP';
         color = Colors.orangeAccent;
         break;

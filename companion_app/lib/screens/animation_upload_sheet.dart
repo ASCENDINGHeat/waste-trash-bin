@@ -300,7 +300,7 @@ class _AnimationUploadSheetState extends State<AnimationUploadSheet> {
         ? _animation!.frames[_currentFrame]
         : null;
 
-    return Padding(
+    return SingleChildScrollView(
       padding: EdgeInsets.only(
         bottom: MediaQuery.of(context).viewInsets.bottom + 20,
         left: 16,
