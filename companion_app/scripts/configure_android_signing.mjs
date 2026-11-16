@@ -13,6 +13,80 @@ const envStorePass = process.env.ANDROID_KEYSTORE_PASSWORD || '';
 const envAlias = process.env.ANDROID_KEY_ALIAS || '';
 const envKeyPass = process.env.ANDROID_KEY_PASSWORD || envStorePass;
 
+function ensurePluginCompileSdkAlignment() {
+  const rootKtsPath = path.join(androidDir, 'build.gradle.kts');
+  const rootGroovyPath = path.join(androidDir, 'build.gradle');
+
+  if (fs.existsSync(rootKtsPath)) {
+    let rootKts = fs.readFileSync(rootKtsPath, 'utf8');
+    if (!rootKts.includes('wastePluginCompileSdkAlign')) {
+      const ktsSnippet = [
+        '',
+        '// Ensure third-party Flutter Android plugins (e.g. file_picker) meet compileSdk >= 36',
+        '// wastePluginCompileSdkAlign',
+        'subprojects {',
+        '    if (project.name != "app") {',
+        '        project.afterEvaluate {',
+        '            val androidExt = project.extensions.findByName("android")',
+        '            if (androidExt != null) {',
+        '                val getSdk = androidExt.javaClass.methods.firstOrNull {',
+        '                    it.name == "getCompileSdk" && it.parameterCount == 0',
+        '                }',
+        '                val currentSdk = (getSdk?.invoke(androidExt) as? Number)?.toInt() ?: 0',
+        '                if (currentSdk < 36) {',
+        '                    val setSdk = androidExt.javaClass.methods.firstOrNull {',
+        '                        (it.name == "setCompileSdk" || it.name == "compileSdkVersion") &&',
+        '                            it.parameterCount == 1 &&',
+        '                            (it.parameterTypes[0].name == "int" ||',
+        '                             it.parameterTypes[0].name == "java.lang.Integer")',
+        '                    }',
+        '                    setSdk?.invoke(androidExt, 36)',
+        '                }',
+        '            }',
+        '        }',
+        '    }',
+        '}',
+        '',
+      ].join('\n');
+
+      if (rootKts.includes('evaluationDependsOn(":app")')) {
+        rootKts = rootKts.replace(
+          /subprojects\s*\{\s*project\.evaluationDependsOn\(":app"\)\s*\}/,
+          (match) => `${ktsSnippet}\n${match}`
+        );
+      } else {
+        rootKts += `\n${ktsSnippet}`;
+      }
+      fs.writeFileSync(rootKtsPath, rootKts, 'utf8');
+      console.log(`Aligned subproject plugin compileSdk >= 36 in ${rootKtsPath}`);
+    }
+  } else if (fs.existsSync(rootGroovyPath)) {
+    let rootGroovy = fs.readFileSync(rootGroovyPath, 'utf8');
+    if (!rootGroovy.includes('wastePluginCompileSdkAlign')) {
+      const groovySnippet = [
+        '',
+        '// wastePluginCompileSdkAlign',
+        'subprojects {',
+        '    if (project.name != "app") {',
+        '        project.afterEvaluate {',
+        '            def androidExt = project.extensions.findByName("android")',
+        '            if (androidExt != null && androidExt.hasProperty("compileSdkVersion")) {',
+        '                androidExt.compileSdkVersion 36',
+        '            }',
+        '        }',
+        '    }',
+        '}',
+        '',
+      ].join('\n');
+      rootGroovy += `\n${groovySnippet}`;
+      fs.writeFileSync(rootGroovyPath, rootGroovy, 'utf8');
+      console.log(`Aligned subproject plugin compileSdk >= 36 in ${rootGroovyPath}`);
+    }
+  }
+}
+
+ensurePluginCompileSdkAlignment();
+
 function escapePropValue(val) {
   return String(val).replace(/\\/g, '\\\\');
 }
