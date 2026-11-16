@@ -30,6 +30,7 @@ esp_err_t app_config_load(smartbin_config_t *cfg)
     cfg->empty_dist_cm        = (float)CONFIG_SMARTBIN_EMPTY_DIST_CM;
     cfg->periodic_interval_s  = (uint32_t)CONFIG_SMARTBIN_PERIODIC_INTERVAL_SEC;
     cfg->oled_sleep_timeout_s = (uint32_t)CONFIG_SMARTBIN_OLED_SLEEP_TIMEOUT_SEC;
+    cfg->oled_ui_mode         = 0; /* OLED_UI_MODE_HUD_MASCOT */
     cfg->servo_open_angle     = (uint8_t)CONFIG_SMARTBIN_SERVO_OPEN_ANGLE;
     cfg->servo_closed_angle   = (uint8_t)CONFIG_SMARTBIN_SERVO_CLOSED_ANGLE;
     cfg->hold_open_s          = (uint8_t)CONFIG_SMARTBIN_HOLD_OPEN_SEC;
@@ -84,6 +85,9 @@ esp_err_t app_config_load(smartbin_config_t *cfg)
     if (nvs_get_u8(handle, "deep_sleep", &u8_val) == ESP_OK) {
         cfg->deep_sleep_enabled = (u8_val != 0);
     }
+    if (nvs_get_u8(handle, "oled_ui_mode", &u8_val) == ESP_OK && u8_val <= 2) {
+        cfg->oled_ui_mode = u8_val;
+    }
 
     nvs_close(handle);
     ESP_LOGI(TAG, "Loaded NVS config: SSID='%s', MQTT='%s', Full=%.1fcm, Empty=%.1fcm, Cycles=%" PRIu32,
@@ -113,6 +117,7 @@ esp_err_t app_config_save(const smartbin_config_t *cfg)
     nvs_set_u32(handle, "oled_sleep_s", cfg->oled_sleep_timeout_s);
     nvs_set_u32(handle, "open_cycles", cfg->open_cycles);
     nvs_set_u8(handle, "deep_sleep", cfg->deep_sleep_enabled ? 1 : 0);
+    nvs_set_u8(handle, "oled_ui_mode", cfg->oled_ui_mode);
 
     err = nvs_commit(handle);
     nvs_close(handle);

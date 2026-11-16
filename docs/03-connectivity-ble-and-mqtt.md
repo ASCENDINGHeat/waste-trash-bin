@@ -39,6 +39,7 @@ Provides both **Configuration (Provisioning)** and **Live Offline Telemetry**:
 | **Apply & Connect** | `0xFF04` | `Write` | Write `0x01` to save to NVS and trigger immediate Wi-Fi connection attempt |
 | **Live Bin Telemetry** | `0xFF05` | `Read`, `Notify` | JSON (`fill_percent`, `distance_cm`, `lid_state`, `open_cycles`) so the user's phone can monitor the trash bin over BLE even when Wi-Fi is down! |
 | **Remote Command JSON** | `0xFF06` | `Write` | Accepts the same JSON command payloads as `smartbin/<id>/cmd` (`open_lid`, `measure_now`, `configure`) directly over BLE! |
+| **Custom Animation Stream** | `0xFF07` | `Write`, `Write Without Response` | Raw 244-byte chunked `.wbin` animation stream with live OLED upload progress HUD display and IEEE 802.3 CRC32 verification |
 
 ---
 
@@ -80,14 +81,23 @@ Built using the `espressif/cjson` managed component:
   ```json
   {"cmd": "open_lid", "hold_s": 5}
   ```
-- **Update calibration or periodic timer interval (persisted to NVS)**:
+- **Download and flash custom `.wbin` animation from URL**:
+  ```json
+  {"cmd": "fetch_anim", "url": "http://192.168.1.50:8000/custom_animation.wbin"}
+  ```
+- **Reset custom animation back to default mascot**:
+  ```json
+  {"cmd": "reset_anim"}
+  ```
+- **Update calibration thresholds, periodic interval, and OLED HUD style (persisted to NVS)**:
   ```json
   {
     "cmd": "configure",
     "full_cm": 10.0,
     "empty_cm": 30.0,
     "periodic_interval_s": 900,
-    "oled_mode": "always_on"
+    "oled_sleep_timeout_s": 60,
+    "oled_ui_mode": "hud_mascot"
   }
   ```
 
@@ -159,25 +169,25 @@ idf.py menuconfig
 
 ---
 
-## 6. Future Roadmap: Tri-Mode Connectivity (`BLE + LAN + MQTT`)
+## 6. Tri-Mode Connectivity Architecture (`LAN + MQTT + BLE`) — Implemented in `v2.0.0`
 
-To support high-bandwidth local transfers (such as user-uploadable OLED animations) alongside cloud telemetry and offline resilience, **W.A.S.T.E.** is designed to evolve into a **Tri-Mode Transport Architecture**:
+In **W.A.S.T.E. v2.0.0**, the communication layer operates as a **Tri-Mode Automatic Transport Architecture**, providing high-bandwidth local transfers, reliable cloud telemetry, and routerless offline resilience:
 
 ```mermaid
 flowchart TD
     APP["W.A.S.T.E. Flutter Companion App"]
 
     subgraph Transports["Tri-Mode Automatic Transport Router"]
-        LAN["1. Local LAN (HTTP REST + WebSocket + mDNS) - Fast GIF Upload and Local Control"]
-        MQTT["2. Cloud MQTT (Flespi Broker) - Remote Access Anywhere (4G / 5G / WAN)"]
-        BLE["3. Direct BLE GATT (Service 0xFF00) - Setup, Offline Failover and Direct Transfer"]
+        LAN["Priority 1: Local LAN (esp_http_server + mDNS _waste._tcp) - Sub-10ms REST & Fast .wbin Upload"]
+        MQTT["Priority 2: Cloud MQTT (esp-mqtt / Flespi) - WAN Telemetry & Remote Commands Anywhere"]
+        BLE["Priority 3: Direct BLE GATT (NimBLE Service 0xFF00) - Offline Telemetry & 0xFF07 Streaming"]
     end
 
     MCU["ESP32-S3 N16R8 (W.A.S.T.E. Firmware)"]
 
-    APP <-->|"Priority 1 (Same Wi-Fi)"| LAN
-    APP <-->|"Priority 2 (Remote / WAN)"| MQTT
-    APP <-->|"Priority 3 (No Wi-Fi / Direct)"| BLE
+    APP <-->|"Priority 1 (Same Wi-Fi Subnet)"| LAN
+    APP <-->|"Priority 2 (Remote WAN / Cellular)"| MQTT
+    APP <-->|"Priority 3 (Direct / No Wi-Fi)"| BLE
 
     LAN <--> MCU
     MQTT <--> MCU
@@ -188,6 +198,129 @@ flowchart TD
 
 | Transport | Bandwidth / Latency | Primary Use Cases |
 | :--- | :--- | :--- |
-| **LAN (`esp_http_server` + `mDNS`)** | $\sim 500\text{ KB/s}$ (`< 10 ms` latency) | Instant `85 KB` custom GIF/animation uploads (`POST /api/oled/upload` in `< 0.3s`), local dashboard streaming without internet |
-| **MQTT (`esp-mqtt` / Flespi)** | $\sim 10\text{ KB/s}$ (`50–150 ms` latency) | Remote monitoring over cellular (`4G/5G`), retained full-bin alerts, cloud history, remote commands |
-| **BLE GATT (`NimBLE` `0xFF00`)** | $\sim 15\text{–}25\text{ KB/s}$ (`247B` MTU) | Initial Wi-Fi/MQTT NVS provisioning, offline failover telemetry, and routerless chunked `.wbin` animation upload (`~5s`) |
+| **LAN (`esp_http_server` + `mDNS`)** | $\sim 500\text{ KB/s}$ (`< 10 ms` latency) | Instant `85 KB` custom `.wbin` uploads (`POST /api/oled/upload` in `< 0.3s`), zero-latency local REST control, telemetry without internet |
+| **MQTT (`esp-mqtt` / Flespi)** | $\sim 10\text{ KB/s}$ (`50–150 ms` latency) | Remote monitoring over cellular (`4G/5G`), retained full-bin alerts, cloud history, remote actuation, background URL animation download (`fetch_anim`) |
+| **BLE GATT (`NimBLE` `0xFF00`–`0xFF07`)** | $\sim 15\text{–}25\text{ KB/s}$ (`244B` MTU) | Initial Wi-Fi/MQTT NVS provisioning, offline failover telemetry, and routerless chunked `.wbin` animation upload (`~4.5s`) |
+
+---
+
+### 6.1 mDNS Service Discovery (`_waste._tcp`)
+
+When connected to Wi-Fi STA, the firmware initializes mDNS responder services via `mdns_init()`:
+- **Service Name**: `_waste`
+- **Protocol**: `_tcp`
+- **Port**: `80`
+- **Hostname**: `smartbin_s3_<mac>` (e.g. `smartbin_s3_a1b2c3.local`)
+- **TXT Records**:
+  - `vendor=ASCENDINGHeat`
+  - `model=WASTE_S3_N16R8`
+  - `version=2.0.0`
+  - `device_id=smartbin_s3_<mac>`
+
+The Flutter Companion App uses mDNS network service discovery to automatically locate W.A.S.T.E. receptacles on the local subnet without requiring users to find or configure IP addresses manually.
+
+---
+
+### 6.2 Local LAN HTTP REST Server (`esp_http_server`) Endpoints
+
+The embedded HTTP server operates on port 80 and is launched automatically upon `IP_EVENT_STA_GOT_IP`:
+
+| Method | URI Path | Request Payload | Response Schema | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| **`GET`** | `/api/status` | None | JSON object | Returns live telemetry, node health, and animation state |
+| **`POST`** | `/api/oled/upload` | Raw binary `.wbin` stream | `{"status":"ok","frames":N,"crc32":"0x..."}` | Streams `.wbin` into PSRAM, verifies CRC32, and writes to `anim_data` partition |
+| **`POST`** | `/api/oled/reset` | Optional JSON / empty | `{"status":"ok"}` | Erases custom animation from flash; restores compiled mascot |
+| **`POST`** | `/api/lid` | `{"action":"open"}` or `{"action":"close"}` | `{"status":"ok","action":"..."}` | Actuates `SG90` servo open or close |
+| **`POST`** | `/api/measure` | Optional JSON / empty | `{"status":"ok","fill_percent":N,"distance_cm":F}` | Triggers immediate 5-ping median ultrasonic distance measurement |
+| **`POST`** | `/api/config` | JSON config object | `{"status":"ok"}` | Updates fill thresholds, periodic intervals, and OLED display modes |
+
+#### Detailed JSON Schemas
+
+1. **`GET /api/status` Response**:
+   ```json
+   {
+     "device_id": "smartbin_s3_a1b2c3",
+     "fill_percent": 42,
+     "distance_cm": 21.6,
+     "lid_state": "closed",
+     "open_cycles": 42,
+     "wifi_rssi": -58,
+     "uptime_s": 3600,
+     "has_custom_anim": true,
+     "active_anim_frames": 85,
+     "active_fps": 15
+   }
+   ```
+
+2. **`POST /api/oled/upload`**:
+   - Content-Type: `application/octet-stream`
+   - Body: Raw `.wbin` (`WGF1`) binary container.
+   - Response (`200 OK`):
+     ```json
+     {
+       "status": "ok",
+       "frames": 85,
+       "crc32": "0xCBF43926"
+     }
+     ```
+   - Errors: `400 Bad Request` if magic header is not `"WGF1"`, if frame count exceeds 512, or if CRC32 check fails.
+
+3. **`POST /api/config` Request**:
+   ```json
+   {
+     "full_cm": 10.0,
+     "empty_cm": 30.0,
+     "periodic_interval_s": 900,
+     "oled_sleep_timeout_s": 60,
+     "oled_ui_mode": "hud_mascot"
+   }
+   ```
+
+---
+
+### 6.3 BLE GATT Characteristic `0xFF07` Streaming Specification
+
+Characteristic `0xFF07` enables routerless custom animation uploads directly over Bluetooth Low Energy:
+- **Service UUID**: `0000ff00-0000-1000-8000-00805f9b34fb`
+- **Characteristic UUID**: `0000ff07-0000-1000-8000-00805f9b34fb`
+- **GATT Properties**: `WRITE`, `WRITE_NO_RSP`
+- **Negotiated MTU**: Up to 247 bytes (chunk payload up to 244 bytes).
+
+#### Upload Session Protocol:
+1. **Header Chunk**: The first chunk starts with the 16-byte `wbin_header_t` (`magic = "WGF1"`, `num_frames`, `target_fps`, `flags`, `payload_bytes`, and expected `crc32`).
+2. **Streaming Transfer**: Subsequent chunks deliver the raw SSD1306 vertical page bytes. Staging buffer tracks received bytes:
+   $$\text{Progress \%} = \frac{\text{bytes\_received} \times 100}{16 + \text{payload\_bytes}}$$
+3. **Live Visual HUD Feedback**: On every chunk received, the firmware invokes:
+   ```c
+   oled_hud_set_upload_progress(true, percent, "BLE");
+   ```
+   Rendering a live progress bar overlay (`"UPLOADING GIF: XX%"`) on Core 1 without stalling BLE throughput.
+4. **Final Verification & Flash Commit**: Once all expected bytes are received, IEEE 802.3 CRC32 is computed over the payload. If verified, the payload is committed to `anim_data` flash via `anim_storage_save_from_buffer` and dynamically swapped into the PSRAM frame cache.
+
+---
+
+### 6.4 MQTT Animation Extension Commands
+
+To allow remote animation provisioning over cloud infrastructure, `smartbin/<device_id>/cmd` supports two animation commands:
+
+1. **`fetch_anim` (Background HTTP URL Download)**:
+   ```json
+   {
+     "cmd": "fetch_anim",
+     "url": "http://192.168.1.50:8000/holiday_theme.wbin"
+   }
+   ```
+   - Core 0 spawns a background `esp_http_client` task.
+   - Streams the `.wbin` file from the specified URL into PSRAM staging buffer.
+   - Updates OLED progress overlay (`"UPLOADING GIF: XX%"` with `"MQTT"` badge).
+   - Validates `WGF1` header and IEEE 802.3 CRC32, erases flash sector, and commits the animation.
+
+2. **`reset_anim` (Restore Default Mascot)**:
+   ```json
+   {
+     "cmd": "reset_anim"
+   }
+   ```
+   - Invokes `anim_storage_erase()` to clear `anim_data` sector 0.
+   - Immediately reloads the compiled 85-frame Hololive Risu / Dancing Cat mascot (`dancing_cat_frames.h`).
+   - Publishes confirmation to `smartbin/<device_id>/status`.

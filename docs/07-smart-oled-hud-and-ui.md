@@ -259,60 +259,125 @@ void oled_hud_show_warning(oled_warn_code_t code, const char *line1, const char 
 
 ---
 
-## 6. Planned Firmware & Companion App Integration
+## 6. Implemented Firmware & Companion App Integration (`v2.0.0`)
 
-| Component | Planned Additions |
-| :--- | :--- |
-| **`main/oled_font5x7.h`** *(New)* | Compact `95-glyph` printable ASCII $5 \times 7$ bitmap font (`475 bytes` in Flash) + $1\times / 2\times$ text, progress bar, and drop-shadow modal box drawing helpers. |
-| **`main/oled_dancing_cat.h / .c`** | Add `SCREEN_BOOT_SPLASH` animator, 5-mode HUD compositor, `oled_hud_show_warning()` popup modal overlay renderer, and `s_composite_fb[1024]` on **Core 1**. |
-| **`main/trash_bin_fsm.c` & `net_ble_mqtt.c`** | Push live state into `oled_hud_update()` and trigger warning modals (`NEAR_FULL`, `PIR_STUCK_TIMEOUT`, `SENSOR_ECHO_ERR`, `WIFI_FAILOVER`, `WIFI_RESET`). |
-| **Remote Command (`configure`)** | Support `"oled_ui_mode": "hud_mascot" | "split_dashboard" | "mascot_only"` in MQTT/BLE JSON configuration and the **W.A.S.T.E. Flutter Companion App**. |
-
+| Component | Implemented Additions | Status |
+| :--- | :--- | :--- |
+| **`main/oled_font5x7.h`** | Compact `95-glyph` printable ASCII $5 \times 7$ bitmap font (`475 bytes` in Flash) + $1\times / 2\times$ text, progress bar, and drop-shadow modal box drawing helpers. | **Implemented** |
+| **`main/oled_dancing_cat.h / .c`** | `SCREEN_BOOT_SPLASH` animator, 5-mode HUD compositor, `oled_hud_show_warning()` popup modal overlay renderer, `s_composite_fb[1024]`, live upload progress bar compositor, and thread-safe mutex buffer swapping on **Core 1**. | **Implemented** |
+| **`main/anim_storage.h / .c`** | Flash partition I/O on `anim_data` (`0x310000`, 1 MB), 16-byte `WGF1` header & IEEE 802.3 CRC32 verification, PSRAM dynamic frame caching, and instant mascot fallback. | **Implemented** |
+| **`main/trash_bin_fsm.c` & `net_ble_mqtt.c`** | Push live state into `oled_hud_update()` and trigger warning modals (`NEAR_FULL`, `PIR_STUCK_TIMEOUT`, `SENSOR_ECHO_ERR`, `WIFI_FAILOVER`, `WIFI_RESET`). | **Implemented** |
+| **`main/lan_server.h / .c`** | Embedded HTTP server (port 80) and mDNS responder (`_waste._tcp`), handling `POST /api/oled/upload` and `POST /api/oled/reset`. | **Implemented** |
+| **Companion App (`companion_app/`)** | In-app GIF-to-`.wbin` converter (`WbinEncoder`), Atkinson 1-bit dithering, virtual OLED canvas preview (`OledCanvasPainter`), and `AnimationUploadSheet` modal UI. | **Implemented** |
 
 ---
 
-## 7. Future Roadmap: User-Uploadable Custom Animations (`.wbin` Format)
+## 7. User-Uploadable Custom OLED Animation Engine (`.wbin` Format) — Implemented in `v2.0.0`
 
-Because the `YD-ESP32-23` (`ESP32-S3 N16R8`) provides **16 MB of NOR Flash** (of which only `2 MB` is currently allocated) and **8 MB of Octal PSRAM**, the OLED animation **does not have to stay hardcoded in C**. Users can upload any `.gif` directly from the **W.A.S.T.E. Flutter Companion App** without recompiling or reflashing firmware.
+The `YD-ESP32-23` (`ESP32-S3 N16R8`) features **16 MB of NOR Flash** and **8 MB of Octal PSRAM**, allowing OLED animations to be updated dynamically at runtime without recompiling or reflashing firmware. Users can upload any custom animation directly from the **W.A.S.T.E. Flutter Companion App** over Local LAN HTTP or BLE GATT.
 
-### 7.1 Why Pre-Convert on the Phone Instead of Decoding `.gif` on the MCU?
-Decoding arbitrary LZW-compressed `.gif` files with variable color tables, disposal methods, and aspect ratios on an MCU wastes CPU cycles and struggles with non-$128 \times 64$ dimensions.
+### 7.1 Client-Side Conversion Architecture
+Decoding arbitrary LZW-compressed `.gif` files with variable color palettes and disposal methods on an embedded MCU exhausts heap memory and wastes compute cycles.
 Instead:
-1. **Phone-Side Conversion & Live Preview**: The **Flutter Companion App** decodes the user's `.gif`, crops/scales it to $128 \times 64$, applies **Atkinson 1-bit dithering** (showing a live monochrome preview on the phone screen), and packs the frames into a compact **`.wbin` (`W.A.S.T.E. Binary Animation`)** stream.
-2. **Zero-Overhead MCU Playback**: The ESP32-S3 receives ready-to-DMA SSD1306 vertical page bytes (`1,024 bytes` per frame), stores them in a dedicated Flash partition (`anim_data`), and loads them into **8 MB Octal PSRAM** at boot.
+1. **Phone-Side Transcoding & Live Preview**: The Flutter Companion App decodes `.gif` frames, downsamples them to $128 \times 64$, applies **Atkinson 1-bit error-diffusion dithering** (providing a real-time monochrome preview on the phone screen), and wraps the frames in a validated **`.wbin` (`W.A.S.T.E. Binary Animation`)** container.
+2. **Zero-Overhead MCU Streaming & Playback**: The ESP32-S3 receives ready-to-DMA SSD1306 vertical page bytes (`1,024 bytes` per frame), commits them to a dedicated Flash partition (`anim_data`), and caches them into **8 MB Octal PSRAM** for smooth 15–30 FPS playback on Core 1.
 
-### 7.2 `.wbin` Binary Container Specification
+### 7.2 `.wbin` (`WGF1`) Binary Container Layout
+
+The `.wbin` container uses a strict 16-byte packed header followed by raw SSD1306 vertical page frame buffers:
+
+```c
+#pragma pack(push, 1)
+typedef struct {
+    char     magic[4];       /* Exact ASCII "WGF1" (0x57, 0x47, 0x46, 0x31) */
+    uint16_t num_frames;     /* 1 to 512 frames (max 512 KB payload) */
+    uint8_t  target_fps;     /* Playback rate: 5 to 30 FPS (default 15) */
+    uint8_t  flags;          /* Bit 0: invert pixels, Bit 1: hud_overlay */
+    uint32_t payload_bytes;  /* num_frames * 1024 */
+    uint32_t crc32;          /* IEEE 802.3 CRC32 calculated over payload bytes */
+} wbin_header_t;
+#pragma pack(pop)
+```
+
+#### Field Specification:
 
 | Offset | Size | Type | Field | Description |
 | :--- | :--- | :--- | :--- | :--- |
-| `0x00` | `4 B` | `char[4]` | `magic` | Magic header: `"WGF1"` (`0x57, 0x47, 0x46, 0x31`) |
+| `0x00` | `4 B` | `char[4]` | `magic` | Container identifier: `"WGF1"` (`0x57, 0x47, 0x46, 0x31`) |
 | `0x04` | `2 B` | `uint16_t` | `num_frames` | Number of $128 \times 64$ frames ($1 \dots 512$, max `512 KB`) |
-| `0x06` | `1 B` | `uint8_t` | `target_fps` | Playback frame rate ($5 \dots 30\text{ FPS}$, default `15`) |
-| `0x07` | `1 B` | `uint8_t` | `flags` | Bit 0: `invert_pixels`, Bit 1: `hud_overlay_enabled` |
-| `0x08` | `4 B` | `uint32_t` | `payload_bytes`| Must equal `num_frames * 1024` |
-| `0x0C` | `4 B` | `uint32_t` | `crc32` | IEEE 802.3 CRC32 checksum of the frame payload |
-| `0x10` | $N \times 1024\text{ B}$ | `uint8_t[]` | `frames` | Raw SSD1306 page-addressed frame buffers ($8\text{ pages} \times 128\text{ B}$) |
+| `0x06` | `1 B` | `uint8_t` | `target_fps` | Playback frame rate ($5 \dots 30\text{ FPS}$, clamped if out of range) |
+| `0x07` | `1 B` | `uint8_t` | `flags` | Bit 0: `WBIN_FLAG_INVERT` (`0x01`), Bit 1: `WBIN_FLAG_HUD_OVERLAY` (`0x02`) |
+| `0x08` | `4 B` | `uint32_t` | `payload_bytes`| Exact payload byte count, must equal $\text{num\_frames} \times 1024$ |
+| `0x0C` | `4 B` | `uint32_t` | `crc32` | Standard IEEE 802.3 CRC32 checksum computed over the frame payload |
+| `0x10` | $N \times 1024\text{ B}$ | `uint8_t[]` | `frames` | Contiguous SSD1306 vertical page-addressed frame buffers ($8\text{ pages} \times 128\text{ cols}$) |
 
-### 7.3 Storage & Fallback Architecture (`16 MB Flash` + `8 MB Octal PSRAM`)
+#### CRC32 Calculation Standard:
+- **Polynomial**: `0xEDB88320` (IEEE 802.3 / ITU-T V.42)
+- **Initial Value**: `0xFFFFFFFF`
+- **Final XOR**: `0xFFFFFFFF`
+- **Scope**: Computed strictly over the payload bytes ($0\dots\text{payload\_bytes}-1$), excluding the 16-byte header.
 
-1. **Dedicated Flash Partition (`partitions.csv`)**:
-   ```csv
-   # Name,     Type, SubType, Offset,   Size,     Flags
-   nvs,        data, nvs,     0x9000,   0x6000,
-   phy_init,   data, phy,     0xf000,   0x1000,
-   factory,    app,  factory, 0x10000,  0x200000,
-   anim_data,  data, 0x99,    0x210000, 0x100000,
-   ```
-   - Reserves a **`1 MB` (`1,024 KB`)** partition (`anim_data`) in the unused upper `14 MB` of Flash—enough to store a **1,000-frame** custom animation!
-2. **PSRAM Staging & Dual-Source Fallback**:
-   - On boot, `oled_dancing_cat_start()` checks the `anim_data` partition header for `"WGF1"` and verifies `crc32`.
-   - **If valid**: Copies the custom `.wbin` frames from `anim_data` into **8 MB Octal PSRAM** and plays the user's custom animation.
-   - **If empty/corrupted (or after a `"reset_anim"` command)**: Automatically falls back to the built-in **85-frame Hololive Risu** animation compiled into `dancing_cat_frames.h`!
+---
 
-### 7.4 Upload Transports (`LAN` vs `BLE` vs `MQTT`)
+### 7.3 Flash Partition Map & Octal PSRAM Caching Architecture
 
-| Transport | Endpoint / Characteristic | Transfer Time (`85 frames` / `85 KB`) | How It Works |
+#### 1. Partition Table Layout (`partitions.csv`):
+```csv
+# Name,     Type, SubType, Offset,   Size,     Flags
+nvs,        data, nvs,     0x9000,   0x6000,
+phy_init,   data, phy,     0xf000,   0x1000,
+factory,    app,  factory, 0x10000,  0x300000,
+anim_data,  data, 0x99,    0x310000, 0x100000,
+```
+- **Geometry & Alignment**:
+  - `factory` app partition: 3 MB (`0x300000` bytes) from `0x010000` to `0x310000`.
+  - `anim_data` partition: **1 MB (`0x100000` bytes / 1,048,576 bytes)** from `0x310000` to `0x410000`.
+  - Start offset `0x310000` is both **64 KB block aligned** (`0x310000 % 0x10000 == 0`) and **4 KB sector aligned** (`0x310000 % 0x1000 == 0`), enabling fast hardware block erases.
+  - Leaves $\sim 11.94\text{ MB}$ unallocated flash headroom within 16 MB NOR Flash (`0x1000000`).
+
+#### 2. Dynamic 8 MB Octal PSRAM Caching:
+At startup, `anim_storage_load_to_psram()` checks `anim_data`:
+- Allocates buffer dynamically in **8 MB Octal PSRAM** via `heap_caps_malloc(payload_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)` with fallback to internal SRAM.
+- Verifies `wbin_header_t` magic, bounds, and computes IEEE 802.3 CRC32 via `esp_rom_crc32_le`.
+- Core 1 `oled_anim_task` renders directly from PSRAM with frame delay dynamically calculated from `target_fps` ($\Delta t = \frac{1000}{\text{fps}}\text{ ms}$).
+
+#### 3. Automatic Mascot Fallback:
+To guarantee that the OLED display always functions:
+- At boot, the 85-frame Hololive Risu / Dancing Cat mascot (`dancing_cat_frames.h`) is pre-rendered into `s_default_psram_buf` in PSRAM.
+- If `anim_data` is unprogrammed (`0xFF`), header magic fails, CRC32 mismatches, or the user issues `POST /api/oled/reset`, the active frame pointer `s_psram_frames` instantly switches to the default mascot buffer without performing runtime dynamic allocations.
+
+#### 4. Thread-Safe Cross-Core Mutex Synchronization:
+- FreeRTOS mutex `s_anim_mutex` safeguards active animation pointer swaps.
+- Network upload tasks (LAN HTTP on Core 0, BLE GATT task, MQTT client) stage uploaded bytes in a temporary staging buffer, verify the complete file and CRC32, acquire `s_anim_mutex`, commit to flash via `anim_storage_save_from_buffer`, and atomically update `s_psram_frames`.
+- Core 1 `oled_anim_task` acquires `s_anim_mutex` briefly when advancing frames, eliminating visual tearing and race conditions.
+
+---
+
+### 7.4 Multi-Transport Uploads & Live Upload Progress HUD
+
+Custom animations can be uploaded through three distinct transports:
+
+| Transport | Endpoint / Mechanism | Typical Time (`85 frames` / `85 KB`) | Description |
 | :--- | :--- | :--- | :--- |
-| **1. Local LAN HTTP** *(Fastest)* | `POST http://<ip>/api/oled/upload` | **`~0.25 seconds`** | Streams `.wbin` directly into PSRAM staging buffer over Wi-Fi LAN, verifies CRC32, and commits to `anim_data` partition. |
-| **2. BLE GATT (`0xFF00`)** *(Routerless)* | Characteristic **`0xFF07`** (`Write Without Response`, `244B` chunks) | **`~4.5 seconds`** | Sends `BEGIN_UPLOAD` $\rightarrow$ streams `244-byte` chunks with a live **`UPLOADING GIF: 68%`** progress bar on the OLED $\rightarrow$ `COMMIT_UPLOAD`. |
-| **3. MQTT URL Fetch** *(Remote)* | `{"cmd":"fetch_anim","url":"https://.../anim.wbin"}` | **`~1.0 second`** | ESP32-S3 downloads `.wbin` over HTTPS directly into PSRAM. |
+| **1. Local LAN HTTP** *(Fastest)* | `POST /api/oled/upload` | **`~0.25 s`** | High-bandwidth binary stream directly from Companion App over Wi-Fi LAN; atomic CRC verification and flash write. |
+| **2. BLE GATT (`0xFF07`)** *(Routerless)* | Characteristic `0xFF07` (`244B` chunks) | **`~4.5 s`** | Routerless transfer for offline setup. Receives 244-byte chunks with progressive reassembly and real-time OLED HUD feedback. |
+| **3. MQTT Remote Fetch** *(Cloud)* | `{"cmd":"fetch_anim","url":"http://..."}` | **`~1.0 s`** | Remote command triggers background `esp_http_client` task to stream `.wbin` from URL into PSRAM and flash. |
+
+#### Live OLED Upload Progress HUD Display
+During streaming transfers over any transport, the firmware invokes `oled_hud_set_upload_progress(true, percent, transport_name)`. The Core 1 OLED compositor renders a real-time progress bar overlay:
+
+```text
++------------------------------------------+
+| MQTT -58dB      [UPLD]        Fill:  42% |  <- Top status bar
++------------------------------------------+
+|                                          |
+|         UPLOADING GIF:  68%              |  <- Large bold progress header
+|      Route: [ BLE CHUNKS (0xFF07) ]      |  <- Transport badge
+|      [###################.......]        |  <- Live linear progress bar
+|      Bytes: 59,136 / 87,056 B            |  <- Real-time transfer counter
+|                                          |
++------------------------------------------+
+| Dist: 21.6cm    ||||||||..    Cycles: 42 |  <- Bottom telemetry bar
++------------------------------------------+
+```
+- On upload completion or connection abort, `oled_hud_set_upload_progress(false, 0, NULL)` removes the overlay, returning instantly to the active animation view.

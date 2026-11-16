@@ -44,6 +44,7 @@ typedef struct {
     float empty_dist_cm;           /* Default: 30.0 cm -> 0%   */
     uint32_t periodic_interval_s;  /* Default: 900 s (15 min)  */
     uint32_t oled_sleep_timeout_s; /* 0 = Always On, >0 = sleep timeout */
+    uint8_t oled_ui_mode;          /* 0 = hud_mascot, 1 = split_dashboard, 2 = mascot_only */
     uint8_t servo_open_angle;      /* Default: 90 deg */
     uint8_t servo_closed_angle;    /* Default: 0 deg  */
     uint8_t hold_open_s;           /* Default: 3 s    */

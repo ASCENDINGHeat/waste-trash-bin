@@ -17,6 +17,10 @@
 #include "driver/gpio.h"
 #include "mqtt_client.h"
 #include "cJSON.h"
+#include "lan_server.h"
+#include "anim_storage.h"
+#include "esp_http_client.h"
+#include "esp_rom_crc.h"
 
 /* NimBLE includes */
 #include "nimble/nimble_port.h"
@@ -41,14 +45,16 @@ static const char *TAG = "net_ble_mqtt";
  * APPLY:    0xFF04 (Write 0x01 to save & connect)
  * TELEM:    0xFF05 (Read/Notify JSON telemetry)
  * CMD:      0xFF06 (Write JSON remote command: open_lid, measure_now, configure)
+ * UPLOAD:   0xFF07 (Write/Write Without Response for chunked .wbin animation stream)
  */
-static const ble_uuid16_t s_svc_uuid        = BLE_UUID16_INIT(0xFF00);
-static const ble_uuid16_t s_chr_ssid_uuid   = BLE_UUID16_INIT(0xFF01);
-static const ble_uuid16_t s_chr_pass_uuid   = BLE_UUID16_INIT(0xFF02);
-static const ble_uuid16_t s_chr_mqtt_uuid   = BLE_UUID16_INIT(0xFF03);
-static const ble_uuid16_t s_chr_apply_uuid  = BLE_UUID16_INIT(0xFF04);
-static const ble_uuid16_t s_chr_telem_uuid  = BLE_UUID16_INIT(0xFF05);
-static const ble_uuid16_t s_chr_cmd_uuid    = BLE_UUID16_INIT(0xFF06);
+static const ble_uuid16_t s_svc_uuid             = BLE_UUID16_INIT(0xFF00);
+static const ble_uuid16_t s_chr_ssid_uuid        = BLE_UUID16_INIT(0xFF01);
+static const ble_uuid16_t s_chr_pass_uuid        = BLE_UUID16_INIT(0xFF02);
+static const ble_uuid16_t s_chr_mqtt_uuid        = BLE_UUID16_INIT(0xFF03);
+static const ble_uuid16_t s_chr_apply_uuid       = BLE_UUID16_INIT(0xFF04);
+static const ble_uuid16_t s_chr_telem_uuid       = BLE_UUID16_INIT(0xFF05);
+static const ble_uuid16_t s_chr_cmd_uuid         = BLE_UUID16_INIT(0xFF06);
+static const ble_uuid16_t s_chr_anim_upload_uuid = BLE_UUID16_INIT(0xFF07);
 
 static char s_device_id[32] = "smartbin_s3";
 static char s_topic_telemetry[64];
@@ -65,6 +71,7 @@ static bool s_wifi_connected = false;
 static bool s_mqtt_connected = false;
 static bool s_ble_advertising = false;
 static bool s_nimble_started = false;
+static bool s_failover_warned = false;
 static int s_wifi_retry_count = 0;
 static int s_boot_btn_hold_ticks = 0;
 static uint16_t s_ble_conn_handle = BLE_HS_CONN_HANDLE_NONE;
@@ -79,9 +86,26 @@ static size_t s_ring_head = 0;
 static size_t s_ring_tail = 0;
 static size_t s_ring_count = 0;
 
+/* BLE 0xFF07 Chunked Animation Upload Staging State */
+static uint8_t *s_ble_upload_buf = NULL;
+static size_t s_ble_upload_received = 0;
+static size_t s_ble_upload_total = 0;
+static int64_t s_ble_upload_last_chunk_us = 0;
+
 static void ble_start_advertising(void);
 static void ble_stop_advertising(void);
 static void wifi_attempt_connect(void);
+
+static void hud_sync_net(void)
+{
+    oled_hud_set_network_state(
+        s_device_id,
+        s_wifi_connected,
+        s_mqtt_connected,
+        s_ble_advertising || (s_ble_conn_handle != BLE_HS_CONN_HANDLE_NONE),
+        net_ble_mqtt_get_rssi()
+    );
+}
 
 static const char *trigger_to_str(smartbin_trigger_t t)
 {
@@ -188,6 +212,110 @@ static void mqtt_flush_psram_ringbuf(void)
 
 /* ---------------- MQTT Client & Command Handler ---------------- */
 
+typedef struct {
+    char url[256];
+} anim_fetch_param_t;
+
+static void anim_fetch_http_task(void *pvParameters)
+{
+    anim_fetch_param_t *param = (anim_fetch_param_t *)pvParameters;
+    if (param == NULL) {
+        vTaskDelete(NULL);
+        return;
+    }
+
+    ESP_LOGI(TAG, "Starting background MQTT fetch_anim from URL: %s", param->url);
+    oled_hud_set_upload_progress(true, 0, "MQTT");
+
+    esp_http_client_config_t config = {
+        .url = param->url,
+        .timeout_ms = 15000,
+    };
+
+    esp_http_client_handle_t client = esp_http_client_init(&config);
+    if (client == NULL) {
+        ESP_LOGE(TAG, "Failed to initialize HTTP client for fetch_anim");
+        oled_hud_set_upload_progress(false, 0, NULL);
+        free(param);
+        vTaskDelete(NULL);
+        return;
+    }
+
+    esp_err_t err = esp_http_client_open(client, 0);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to open HTTP connection: %s", esp_err_to_name(err));
+        esp_http_client_cleanup(client);
+        oled_hud_set_upload_progress(false, 0, NULL);
+        free(param);
+        vTaskDelete(NULL);
+        return;
+    }
+
+    int content_len = esp_http_client_fetch_headers(client);
+    if (content_len < (int)sizeof(wbin_header_t) || content_len > 1048576) {
+        ESP_LOGE(TAG, "Invalid content length for fetch_anim: %d bytes", content_len);
+        esp_http_client_close(client);
+        esp_http_client_cleanup(client);
+        oled_hud_set_upload_progress(false, 0, NULL);
+        free(param);
+        vTaskDelete(NULL);
+        return;
+    }
+
+    size_t total_len = (size_t)content_len;
+    uint8_t *staging_buf = (uint8_t *)heap_caps_malloc(total_len, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (staging_buf == NULL) {
+        staging_buf = (uint8_t *)heap_caps_malloc(total_len, MALLOC_CAP_8BIT);
+    }
+    if (staging_buf == NULL) {
+        ESP_LOGE(TAG, "Failed to allocate %zu bytes in PSRAM for fetch_anim", total_len);
+        esp_http_client_close(client);
+        esp_http_client_cleanup(client);
+        oled_hud_set_upload_progress(false, 0, NULL);
+        free(param);
+        vTaskDelete(NULL);
+        return;
+    }
+
+    size_t received = 0;
+    while (received < total_len) {
+        int read_len = esp_http_client_read(client, (char *)(staging_buf + received), (int)(total_len - received));
+        if (read_len <= 0) {
+            ESP_LOGE(TAG, "HTTP read error at %zu / %zu bytes", received, total_len);
+            break;
+        }
+        received += (size_t)read_len;
+        uint8_t pct = (uint8_t)((received * 100ULL) / total_len);
+        oled_hud_set_upload_progress(true, pct, "MQTT");
+    }
+
+    esp_http_client_close(client);
+    esp_http_client_cleanup(client);
+
+    if (received == total_len) {
+        wbin_header_t hdr;
+        memcpy(&hdr, staging_buf, sizeof(hdr));
+        if (memcmp(hdr.magic, WBIN_MAGIC, 4) == 0 &&
+            hdr.num_frames >= WBIN_MIN_FRAMES && hdr.num_frames <= WBIN_MAX_FRAMES) {
+            uint32_t computed_crc = esp_rom_crc32_le(0, staging_buf + sizeof(wbin_header_t), hdr.payload_bytes);
+            if (computed_crc == hdr.crc32) {
+                ESP_LOGI(TAG, "MQTT fetch_anim verified successfully (CRC 0x%08" PRIx32 "), committing", computed_crc);
+                oled_anim_commit_and_reload(staging_buf, total_len);
+            } else {
+                ESP_LOGE(TAG, "MQTT fetch_anim CRC mismatch: computed 0x%08" PRIx32 " != header 0x%08" PRIx32,
+                         computed_crc, hdr.crc32);
+            }
+        } else {
+            ESP_LOGE(TAG, "MQTT fetch_anim invalid header magic or frame count");
+        }
+    }
+
+    oled_hud_set_upload_progress(false, 0, NULL);
+    heap_caps_free(staging_buf);
+    free(param);
+    vTaskDelete(NULL);
+}
+
 static void handle_mqtt_cmd_payload(const char *data, int len)
 {
     cJSON *root = cJSON_ParseWithLength(data, (size_t)len);
@@ -222,6 +350,7 @@ static void handle_mqtt_cmd_payload(const char *data, int len)
             app_config_save(cfg);
             esp_wifi_disconnect();
             ble_start_advertising();
+            oled_hud_show_warning(OLED_WARN_WIFI_RESET, "NVS WiFi cleared", "BLE Setup Active", 4000);
             ESP_LOGW(TAG, "Wi-Fi credentials cleared via remote command; BLE provisioning active");
         } else if (strcmp(cmd, "configure") == 0) {
             smartbin_config_t *cfg = app_config_get();
@@ -229,6 +358,7 @@ static void handle_mqtt_cmd_payload(const char *data, int len)
             const cJSON *empty_cm = cJSON_GetObjectItemCaseSensitive(root, "empty_cm");
             const cJSON *per_s = cJSON_GetObjectItemCaseSensitive(root, "periodic_interval_s");
             const cJSON *oled_s = cJSON_GetObjectItemCaseSensitive(root, "oled_sleep_timeout_s");
+            const cJSON *ui_mode = cJSON_GetObjectItemCaseSensitive(root, "oled_ui_mode");
 
             if (cJSON_IsNumber(full_cm) && full_cm->valuedouble > 1.0) {
                 cfg->full_dist_cm = (float)full_cm->valuedouble;
@@ -243,10 +373,38 @@ static void handle_mqtt_cmd_payload(const char *data, int len)
                 cfg->oled_sleep_timeout_s = (uint32_t)oled_s->valueint;
                 oled_dancing_cat_set_sleep_timeout(cfg->oled_sleep_timeout_s);
             }
+            if (cJSON_IsString(ui_mode) && ui_mode->valuestring != NULL) {
+                if (strcmp(ui_mode->valuestring, "split_dashboard") == 0) {
+                    cfg->oled_ui_mode = (uint8_t)OLED_UI_MODE_SPLIT_DASHBOARD;
+                } else if (strcmp(ui_mode->valuestring, "mascot_only") == 0) {
+                    cfg->oled_ui_mode = (uint8_t)OLED_UI_MODE_MASCOT_ONLY;
+                } else {
+                    cfg->oled_ui_mode = (uint8_t)OLED_UI_MODE_HUD_MASCOT;
+                }
+                oled_hud_set_ui_mode((oled_ui_mode_t)cfg->oled_ui_mode);
+            }
             app_config_save(cfg);
             if (s_cmd_cbs.on_config_updated != NULL) {
                 s_cmd_cbs.on_config_updated(cfg);
             }
+        } else if (strcmp(cmd, "fetch_anim") == 0) {
+            const cJSON *url_item = cJSON_GetObjectItemCaseSensitive(root, "url");
+            if (cJSON_IsString(url_item) && url_item->valuestring != NULL && strlen(url_item->valuestring) > 0) {
+                anim_fetch_param_t *param = (anim_fetch_param_t *)malloc(sizeof(anim_fetch_param_t));
+                if (param != NULL) {
+                    snprintf(param->url, sizeof(param->url), "%s", url_item->valuestring);
+                    BaseType_t res = xTaskCreate(anim_fetch_http_task, "anim_fetch", 8192, param, 3, NULL);
+                    if (res != pdPASS) {
+                        ESP_LOGE(TAG, "Failed to spawn anim_fetch_http_task");
+                        free(param);
+                    }
+                }
+            } else {
+                ESP_LOGW(TAG, "fetch_anim command missing valid 'url' property");
+            }
+        } else if (strcmp(cmd, "reset_anim") == 0) {
+            ESP_LOGI(TAG, "MQTT command reset_anim: restoring compiled dancing cat mascot");
+            oled_anim_reset_to_default();
         }
     }
     cJSON_Delete(root);
@@ -267,12 +425,14 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
             esp_mqtt_client_subscribe(s_mqtt_client, s_topic_cmd, 1);
             mqtt_flush_psram_ringbuf();
             ble_stop_advertising();
+            hud_sync_net();
             break;
 
         case MQTT_EVENT_DISCONNECTED:
             s_mqtt_connected = false;
             ESP_LOGW(TAG, "MQTT disconnected from broker; enabling BLE GATT provisioning/failover");
             ble_start_advertising();
+            hud_sync_net();
             break;
 
         case MQTT_EVENT_DATA:
@@ -367,6 +527,84 @@ static int gatt_chr_access_cb(uint16_t conn_handle, uint16_t attr_handle,
             ESP_LOGI(TAG, "BLE GATT received remote command JSON: %s", cmd_buf);
             handle_mqtt_cmd_payload(cmd_buf, (int)copied);
             return 0;
+        } else if (uuid16 == 0xFF07 && om_len > 0) {
+            uint8_t chunk[512];
+            uint16_t copied = 0;
+            ble_hs_mbuf_to_flat(ctxt->om, chunk, sizeof(chunk), &copied);
+
+            int64_t now_us = esp_timer_get_time();
+            if (s_ble_upload_buf != NULL && (now_us - s_ble_upload_last_chunk_us > 10000000LL)) {
+                /* Discard stale or abandoned upload after 10s of silence */
+                ESP_LOGW(TAG, "BLE 0xFF07 upload timeout: discarding %zu bytes", s_ble_upload_received);
+                heap_caps_free(s_ble_upload_buf);
+                s_ble_upload_buf = NULL;
+                s_ble_upload_received = 0;
+                s_ble_upload_total = 0;
+                oled_hud_set_upload_progress(false, 0, NULL);
+            }
+
+            if (s_ble_upload_buf == NULL) {
+                if (copied < sizeof(wbin_header_t)) {
+                    ESP_LOGE(TAG, "BLE 0xFF07 initial packet smaller than header (%u B)", copied);
+                    return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
+                }
+                wbin_header_t hdr;
+                memcpy(&hdr, chunk, sizeof(hdr));
+                if (memcmp(hdr.magic, WBIN_MAGIC, 4) != 0) {
+                    ESP_LOGE(TAG, "BLE 0xFF07 invalid magic: %.4s", hdr.magic);
+                    return BLE_ATT_ERR_UNLIKELY;
+                }
+                if (hdr.num_frames < WBIN_MIN_FRAMES || hdr.num_frames > WBIN_MAX_FRAMES) {
+                    ESP_LOGE(TAG, "BLE 0xFF07 invalid frame count: %" PRIu16, hdr.num_frames);
+                    return BLE_ATT_ERR_UNLIKELY;
+                }
+                s_ble_upload_total = sizeof(wbin_header_t) + (size_t)hdr.payload_bytes;
+                if (s_ble_upload_total > 1048576) {
+                    ESP_LOGE(TAG, "BLE 0xFF07 upload exceeds partition limit: %zu", s_ble_upload_total);
+                    return BLE_ATT_ERR_UNLIKELY;
+                }
+                s_ble_upload_buf = (uint8_t *)heap_caps_malloc(s_ble_upload_total, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+                if (s_ble_upload_buf == NULL) {
+                    s_ble_upload_buf = (uint8_t *)heap_caps_malloc(s_ble_upload_total, MALLOC_CAP_8BIT);
+                }
+                if (s_ble_upload_buf == NULL) {
+                    ESP_LOGE(TAG, "BLE 0xFF07 failed to allocate %zu bytes in PSRAM", s_ble_upload_total);
+                    return BLE_ATT_ERR_INSUFFICIENT_RES;
+                }
+                s_ble_upload_received = 0;
+                oled_hud_set_upload_progress(true, 0, "BLE");
+            }
+
+            size_t to_copy = copied;
+            if (s_ble_upload_received + to_copy > s_ble_upload_total) {
+                to_copy = s_ble_upload_total - s_ble_upload_received;
+            }
+            memcpy(s_ble_upload_buf + s_ble_upload_received, chunk, to_copy);
+            s_ble_upload_received += to_copy;
+            s_ble_upload_last_chunk_us = now_us;
+
+            uint8_t pct = (uint8_t)((s_ble_upload_received * 100ULL) / s_ble_upload_total);
+            oled_hud_set_upload_progress(true, pct, "BLE");
+
+            if (s_ble_upload_received >= s_ble_upload_total) {
+                wbin_header_t hdr;
+                memcpy(&hdr, s_ble_upload_buf, sizeof(hdr));
+                uint32_t computed_crc = esp_rom_crc32_le(0, s_ble_upload_buf + sizeof(wbin_header_t), hdr.payload_bytes);
+                if (computed_crc == hdr.crc32) {
+                    ESP_LOGI(TAG, "BLE 0xFF07 stream complete (%zu bytes), CRC valid (0x%08" PRIx32 "), committing",
+                             s_ble_upload_total, computed_crc);
+                    oled_anim_commit_and_reload(s_ble_upload_buf, s_ble_upload_total);
+                } else {
+                    ESP_LOGE(TAG, "BLE 0xFF07 CRC mismatch: computed 0x%08" PRIx32 " != declared 0x%08" PRIx32,
+                             computed_crc, hdr.crc32);
+                }
+                oled_hud_set_upload_progress(false, 0, NULL);
+                heap_caps_free(s_ble_upload_buf);
+                s_ble_upload_buf = NULL;
+                s_ble_upload_received = 0;
+                s_ble_upload_total = 0;
+            }
+            return 0;
         }
     }
     return BLE_ATT_ERR_UNLIKELY;
@@ -408,6 +646,11 @@ static const struct ble_gatt_svc_def s_gatt_svcs[] = {
                 .access_cb = gatt_chr_access_cb,
                 .flags = BLE_GATT_CHR_F_WRITE,
             },
+            {
+                .uuid = &s_chr_anim_upload_uuid.u,
+                .access_cb = gatt_chr_access_cb,
+                .flags = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_NO_RSP,
+            },
             {0}
         },
     },
@@ -428,16 +671,26 @@ static int ble_gap_event_cb(struct ble_gap_event *event, void *arg)
                     ble_start_advertising();
                 }
             }
+            hud_sync_net();
             break;
 
         case BLE_GAP_EVENT_DISCONNECT:
             ESP_LOGI(TAG, "BLE client disconnected");
             s_ble_conn_handle = BLE_HS_CONN_HANDLE_NONE;
+            if (s_ble_upload_buf != NULL) {
+                ESP_LOGW(TAG, "Cleaning up partial BLE upload on client disconnect");
+                heap_caps_free(s_ble_upload_buf);
+                s_ble_upload_buf = NULL;
+                s_ble_upload_received = 0;
+                s_ble_upload_total = 0;
+                oled_hud_set_upload_progress(false, 0, NULL);
+            }
             if (!s_wifi_connected) {
                 ble_start_advertising();
             } else {
                 rgb_status_set_ble_active(false);
             }
+            hud_sync_net();
             break;
 
         case BLE_GAP_EVENT_ADV_COMPLETE:
@@ -445,6 +698,7 @@ static int ble_gap_event_cb(struct ble_gap_event *event, void *arg)
             if (!s_wifi_connected) {
                 ble_start_advertising();
             }
+            hud_sync_net();
             break;
 
         default:
@@ -479,6 +733,7 @@ static void ble_start_advertising(void)
                           &adv_params, ble_gap_event_cb, NULL) == 0) {
         s_ble_advertising = true;
         rgb_status_set_ble_active(true);
+        hud_sync_net();
         ESP_LOGI(TAG, "BLE advertising active as '%s' (setup / Wi-Fi failover mode)", name);
     }
 }
@@ -492,6 +747,7 @@ static void ble_stop_advertising(void)
     if (s_ble_conn_handle == BLE_HS_CONN_HANDLE_NONE) {
         rgb_status_set_ble_active(false);
     }
+    hud_sync_net();
 }
 
 static void ble_on_sync(void)
@@ -555,11 +811,13 @@ static void boot_btn_timer_cb(void *arg)
             app_config_save(cfg);
             esp_wifi_disconnect();
             ble_start_advertising();
+            oled_hud_show_warning(OLED_WARN_WIFI_RESET, "NVS WiFi cleared", "BLE Setup Active", 4000);
             ESP_LOGW(TAG, "BOOT button held 3s: cleared Wi-Fi NVS credentials & restarted BLE provisioning!");
         }
     } else {
         if (s_boot_btn_hold_ticks >= 1 && s_boot_btn_hold_ticks < 30) {
             /* Short press: immediately re-enable BLE advertising without wiping Wi-Fi */
+            oled_dancing_cat_notify_activity();
             ble_start_advertising();
             ESP_LOGI(TAG, "BOOT button pressed: BLE provisioning advertising enabled");
         }
@@ -577,6 +835,9 @@ static void wifi_ip_event_handler(void *arg, esp_event_base_t event_base,
         s_wifi_connected = false;
         s_mqtt_connected = false;
 
+        /* Stop local LAN HTTP server and mDNS service while disconnected */
+        lan_server_stop();
+
         if (strlen(app_config_get()->wifi_ssid) > 0 && s_wifi_retry_count < WIFI_MAX_RETRY) {
             s_wifi_retry_count++;
             ESP_LOGW(TAG, "Wi-Fi disconnected; retry %d/%d", s_wifi_retry_count, WIFI_MAX_RETRY);
@@ -584,16 +845,28 @@ static void wifi_ip_event_handler(void *arg, esp_event_base_t event_base,
         } else {
             ESP_LOGW(TAG, "Wi-Fi unavailable; switching to BLE failover mode");
             ble_start_advertising();
+            if (!s_failover_warned && strlen(app_config_get()->wifi_ssid) > 0) {
+                s_failover_warned = true;
+                oled_hud_show_warning(OLED_WARN_WIFI_FAILOVER,
+                                      "BLE Mode Active",
+                                      "Buffering in PSRAM",
+                                      3500);
+            }
             if (s_wifi_retry_timer != NULL) {
                 esp_timer_stop(s_wifi_retry_timer);
                 esp_timer_start_once(s_wifi_retry_timer, WIFI_BG_RETRY_INTERVAL_US);
             }
         }
+        hud_sync_net();
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
         ESP_LOGI(TAG, "Wi-Fi connected! IP: " IPSTR, IP2STR(&event->ip_info.ip));
         s_wifi_connected = true;
         s_wifi_retry_count = 0;
+        s_failover_warned = false;
+
+        /* Start local LAN HTTP REST server & mDNS service */
+        lan_server_start();
 
         /* Enable Wi-Fi Modem Sleep to drop idle draw from ~105mA to ~15mA */
         esp_wifi_set_ps(WIFI_PS_MAX_MODEM);
@@ -601,6 +874,7 @@ static void wifi_ip_event_handler(void *arg, esp_event_base_t event_base,
         if (s_wifi_retry_timer != NULL) {
             esp_timer_stop(s_wifi_retry_timer);
         }
+        hud_sync_net();
         /* Keep BLE advertising active until MQTT_EVENT_CONNECTED succeeds */
         mqtt_start_or_reconfigure();
     }
@@ -620,6 +894,7 @@ esp_err_t net_ble_mqtt_init(const net_cmd_callbacks_t *cbs)
     snprintf(s_topic_alert, sizeof(s_topic_alert), "smartbin/%s/alert", s_device_id);
     snprintf(s_topic_status, sizeof(s_topic_status), "smartbin/%s/status", s_device_id);
     snprintf(s_topic_cmd, sizeof(s_topic_cmd), "smartbin/%s/cmd", s_device_id);
+    hud_sync_net();
 
     /* Allocate 256-entry offline telemetry ring buffer in 8 MB Octal PSRAM */
     s_ringbuf_mux = xSemaphoreCreateMutex();
@@ -687,6 +962,7 @@ esp_err_t net_ble_mqtt_publish_telemetry(const smartbin_telemetry_t *telemetry)
         return ESP_ERR_INVALID_ARG;
     }
 
+    hud_sync_net();
     format_telemetry_json(telemetry, s_latest_telem_json, sizeof(s_latest_telem_json));
 
     /* Notify connected BLE GATT client if any (works offline!) */
