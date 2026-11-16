@@ -1,6 +1,7 @@
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import '../services/waste_connection_service.dart';
+import 'animation_upload_sheet.dart';
 import 'ble_provision_sheet.dart';
 import 'calibration_sheet.dart';
 
@@ -64,6 +65,17 @@ class DashboardScreen extends StatelessWidget {
             actions: [
               _buildTransportBadge(context),
               IconButton(
+                tooltip: 'OLED Animation (.wbin)',
+                icon: const Icon(Icons.movie_filter_outlined),
+                onPressed: () {
+                  showModalBottomSheet(
+                    context: context,
+                    isScrollControlled: true,
+                    builder: (_) => AnimationUploadSheet(service: service),
+                  );
+                },
+              ),
+              IconButton(
                 tooltip: 'Sensor & Power Calibration',
                 icon: const Icon(Icons.tune),
                 onPressed: () {
@@ -102,15 +114,21 @@ class DashboardScreen extends StatelessWidget {
                 child: Row(
                   children: [
                     Icon(
-                      service.transportMode == TransportMode.ble
-                          ? Icons.bluetooth_connected
+                      service.transportMode == TransportMode.lan
+                          ? Icons.lan_outlined
                           : (service.transportMode == TransportMode.mqtt
                               ? Icons.cloud_done
-                              : Icons.portable_wifi_off),
+                              : (service.transportMode == TransportMode.ble
+                                  ? Icons.bluetooth_connected
+                                  : Icons.portable_wifi_off)),
                       size: 18,
-                      color: service.transportMode == TransportMode.disconnected
-                          ? Colors.orangeAccent
-                          : Colors.tealAccent,
+                      color: service.transportMode == TransportMode.lan
+                          ? const Color(0xFF00E676)
+                          : (service.transportMode == TransportMode.mqtt
+                              ? Colors.tealAccent
+                              : (service.transportMode == TransportMode.ble
+                                  ? Colors.lightBlueAccent
+                                  : Colors.orangeAccent)),
                     ),
                     const SizedBox(width: 10),
                     Expanded(
@@ -299,14 +317,28 @@ class DashboardScreen extends StatelessWidget {
 
   Widget _buildTransportBadge(BuildContext context) {
     final mode = service.transportMode;
-    final label = mode == TransportMode.ble
-        ? 'BLE GATT'
-        : (mode == TransportMode.mqtt ? 'MQTT LIVE' : 'SETUP');
-    final color = mode == TransportMode.ble
-        ? Colors.lightBlueAccent
-        : (mode == TransportMode.mqtt
-            ? Colors.tealAccent
-            : Colors.orangeAccent);
+    final String label;
+    final Color color;
+
+    switch (mode) {
+      case TransportMode.lan:
+        label = 'LAN (Local)';
+        color = const Color(0xFF00E676);
+        break;
+      case TransportMode.mqtt:
+        label = 'Cloud (MQTT)';
+        color = Colors.tealAccent;
+        break;
+      case TransportMode.ble:
+        label = 'BLE (Direct)';
+        color = Colors.lightBlueAccent;
+        break;
+      case TransportMode.disconnected:
+      default:
+        label = 'SETUP';
+        color = Colors.orangeAccent;
+        break;
+    }
 
     return GestureDetector(
       onTap: () {

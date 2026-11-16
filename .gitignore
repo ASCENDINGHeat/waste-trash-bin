@@ -20,3 +20,7 @@ companion_app/android/key.properties
 *.jks
 *.keystore
 
+# Local agent orchestration artifacts
+.agents/
+TEST_READY.md
+

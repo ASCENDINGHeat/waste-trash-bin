@@ -16,10 +16,11 @@ class _CalibrationSheetState extends State<CalibrationSheet> {
   double _emptyCm = 30.0;
   double _periodicMinutes = 15.0;
   double _oledSleepSeconds = 0.0;
+  String _oledUiMode = 'hud_mascot';
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
+    return SingleChildScrollView(
       padding: EdgeInsets.only(
         left: 20,
         right: 20,
@@ -109,7 +110,25 @@ class _CalibrationSheetState extends State<CalibrationSheet> {
             onChanged: (v) => setState(() => _oledSleepSeconds = v),
           ),
 
-          const SizedBox(height: 12),
+          const SizedBox(height: 8),
+          const Text('Core 1 OLED Idle Layout:'),
+          const SizedBox(height: 8),
+          SizedBox(
+            width: double.infinity,
+            child: SegmentedButton<String>(
+              segments: const [
+                ButtonSegment(value: 'hud_mascot', label: Text('HUD+Cat')),
+                ButtonSegment(value: 'split_dashboard', label: Text('Split')),
+                ButtonSegment(value: 'mascot_only', label: Text('Mascot')),
+              ],
+              selected: {_oledUiMode},
+              onSelectionChanged: (sel) {
+                setState(() => _oledUiMode = sel.first);
+              },
+            ),
+          ),
+
+          const SizedBox(height: 16),
           SizedBox(
             width: double.infinity,
             child: FilledButton.icon(
@@ -121,6 +140,7 @@ class _CalibrationSheetState extends State<CalibrationSheet> {
                   emptyCm: _emptyCm,
                   periodicIntervalS: (_periodicMinutes * 60).toInt(),
                   oledSleepTimeoutS: _oledSleepSeconds.toInt(),
+                  oledUiMode: _oledUiMode,
                 );
                 await widget.service.updateBinConfig(cfg);
                 if (context.mounted) {

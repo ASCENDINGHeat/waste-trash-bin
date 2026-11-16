@@ -4,6 +4,57 @@ All notable changes to **W.A.S.T.E.** (**W**aste **A**utomation and **S**ensing 
 
 ---
 
+## [v2.0.0] — Gap B: Tri-Mode LAN Connectivity & Custom .wbin OLED Animation Subsystem
+
+### Release Assets (`v2.0.0`)
+- **`waste-firmware-v2.0.0-merged.bin`**: All-in-one merged ESP32-S3 (`N16R8`) image (Bootloader + Partition Table + Application) for flashing at offset **`0x0`**.
+- **`waste-firmware-v2.0.0.bin`**: Standalone application partition image for offset **`0x10000`**.
+- **`waste-companion-v2.0.0.apk`**: Android Release APK for the **W.A.S.T.E. Flutter Companion App** (`v2.0.0+4`).
+
+### Changes & Additions
+
+#### 1. Embedded Tri-Mode Local LAN Server & mDNS Discovery (`main/lan_server.c`, `main/lan_server.h`)
+- **Embedded HTTP REST Server (`esp_http_server`)**: Runs on port 80, automatically started upon `IP_EVENT_STA_GOT_IP` and stopped gracefully on STA disconnect.
+- **mDNS Service Advertisement (`espressif/mdns`)**: Broadcasts service `_waste._tcp` on port 80 under hostname `smartbin_s3_<mac>` with TXT records (`vendor=ASCENDINGHeat`, `model=WASTE_S3_N16R8`, `version=2.0.0`, `device_id=smartbin_s3_<mac>`).
+- **Full REST API Suite**:
+  - `GET /api/status`: Returns real-time JSON telemetry (`fill_percent`, `distance_cm`, `lid_state`, `open_cycles`, `wifi_rssi`, `uptime_s`, `has_custom_anim`, `active_anim_frames`, `active_fps`).
+  - `POST /api/oled/upload`: High-speed binary upload endpoint streaming `.wbin` directly into flash and PSRAM with sub-second transfer times.
+  - `POST /api/oled/reset`: Erases custom animation partition and restores the default mascot.
+  - `POST /api/lid`: Remote actuation command (`{"action":"open"|"close"}`).
+  - `POST /api/measure`: Triggers immediate 5-ping median ultrasonic distance measurement.
+  - `POST /api/config`: Updates fill thresholds, periodic ping intervals, and OLED UI display mode.
+
+#### 2. Custom `.wbin` (`WGF1`) Animation Subsystem (`main/anim_storage.c`, `main/anim_storage.h`)
+- **1 MB Dedicated Flash Partition (`anim_data`)**: Reserved at offset `0x310000` (subtype `0x99`, 64 KB block aligned & 4 KB sector aligned) in `partitions.csv`.
+- **`.wbin` (`WGF1`) Binary Container Format**: 16-byte packed header (`magic: "WGF1"`, `num_frames: 1..512`, `target_fps: 5..30`, `flags` for pixel inversion and HUD overlay masking, `payload_bytes`, and standard IEEE 802.3 `crc32` over payload bytes).
+- **8 MB Octal PSRAM Dynamic Frame Caching**: Allocates frame memory in Octal PSRAM (`MALLOC_CAP_SPIRAM`) at boot, dynamically pacing frames at target FPS ($5\dots 30\text{ FPS}$).
+- **Automatic Fallback to Compiled Mascot**: Pre-renders the compiled 85-frame Hololive Risu / Dancing Cat mascot (`dancing_cat_frames.h`) into PSRAM on startup; in the event of an unprogrammed partition (`0xFF`), header error, CRC mismatch, or user reset, seamlessly falls back without memory allocations.
+- **Live Upload Progress HUD**: Core 1 Smart OLED HUD compositing hook (`oled_hud_set_upload_progress`) displays a live progress bar overlay (`"UPLOADING GIF: XX%"`) with transport badge (`LAN`, `BLE`, or `MQTT`) during streaming.
+- **Thread-Safe Cross-Core Synchronization**: FreeRTOS mutex (`s_anim_mutex`) protects frame pointer swaps between network tasks on Core 0 and the render loop on Core 1.
+
+#### 3. BLE GATT Characteristic `0xFF07` Streaming (`main/net_ble_mqtt.c`)
+- **Characteristic `0xFF07` Added**: UUID `0000ff07-0000-1000-8000-00805f9b34fb` with `Write` and `Write Without Response` properties under Service `0xFF00`.
+- **Chunked Transfer Protocol**: Supports routerless chunked streaming up to negotiated MTU (244 bytes) with progressive reassembly, OLED HUD feedback, and atomic flash commitment upon CRC32 verification.
+
+#### 4. MQTT Remote Animation Commands (`main/net_ble_mqtt.c`)
+- **`fetch_anim` Command**: JSON `{"cmd":"fetch_anim","url":"http://..."}` spawns a background HTTP client task to stream a remote `.wbin` file directly into PSRAM, verify CRC32, and commit to `anim_data` flash.
+- **`reset_anim` Command**: JSON `{"cmd":"reset_anim"}` erases the custom animation flash partition and restores the dancing cat mascot.
+
+#### 5. Cross-Platform Flutter Companion App v2.0.0 (`companion_app/`)
+- **Tri-Mode Connection Router (`WasteConnectionService`)**: Automatically resolves and prioritizes connections: **Priority 1 (Local LAN)** $\rightarrow$ **Priority 2 (Cloud MQTT)** $\rightarrow$ **Priority 3 (Direct BLE GATT `0xFF00`)**.
+- **Pure-Dart GIF-to-`.wbin` Converter (`WbinEncoder`)**: Decodes user-selected `.gif` files, performs box-area downsampling to $128 \times 64$, applies Atkinson 1-bit error diffusion dithering ($\Delta / 8$), formats into SSD1306 vertical page bytes, and packs 16-byte `WGF1` containers with IEEE 802.3 CRC32 (`0xEDB88320`).
+- **Custom Animation Uploader Modal (`AnimationUploadSheet`)**: Provides local GIF picking, geometric demo generator, live virtual 128x64 OLED canvas preview (`OledCanvasPainter`), frame scrub slider, target FPS control, upload progress bar, and "Reset to Mascot" action.
+- **Dashboard UI Enhancements (`DashboardScreen`)**: Added AppBar launcher button for OLED animations and Tri-Mode status badges (`LAN` green, `Cloud` teal, `BLE` light blue).
+- **Expanded Automated Test Suite (`test/widget_test.dart`)**: 16 unit and widget tests across 7 test groups covering `.wbin` packing, IEEE 802.3 CRC32 verification vectors, Tri-Mode fallback precedence, and upload UI flows.
+
+#### 6. Build Manifests & Deterministic Verification Tooling
+- **ESP-IDF v6.1 Manifests**: Registered `esp_http_server`, `mdns`, `esp_http_client`, `esp_partition`, `esp_crc` in `main/CMakeLists.txt` and `espressif/mdns` in `main/idf_component.yml`.
+- **Deterministic Node.js Verification Suite (`tools/`)**:
+  - `tools/verify_gap_b.mjs`: 4-tier E2E verification suite testing WGF1 binary layout, CRC32 vectors, corner-case rejection, streaming simulation, and static code compliance.
+  - `tools/verify_partitions.mjs`: Validates 4KB sector and 64KB block alignment of `partitions.csv` and ensures non-overlapping layout within 16 MB NOR Flash.
+
+---
+
 ## [v1.1.0] — Release Asset Rebranding & Smart OLED HUD Specification
 
 ### Release Assets (`v1.1.0`)

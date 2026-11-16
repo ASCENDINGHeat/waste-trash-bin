@@ -71,12 +71,14 @@ class WasteBinConfig {
   final double emptyCm;
   final int periodicIntervalS;
   final int oledSleepTimeoutS;
+  final String oledUiMode;
 
   const WasteBinConfig({
     this.fullCm = 10.0,
     this.emptyCm = 30.0,
     this.periodicIntervalS = 900,
     this.oledSleepTimeoutS = 0,
+    this.oledUiMode = 'hud_mascot',
   });
 
   Map<String, dynamic> toCommandJson() => {
@@ -85,5 +87,6 @@ class WasteBinConfig {
         'empty_cm': emptyCm,
         'periodic_interval_s': periodicIntervalS,
         'oled_sleep_timeout_s': oledSleepTimeoutS,
+        'oled_ui_mode': oledUiMode,
       };
 }

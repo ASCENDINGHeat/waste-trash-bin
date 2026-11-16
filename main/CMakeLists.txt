@@ -9,6 +9,8 @@ idf_component_register(
         "oled_dancing_cat.c"
         "net_ble_mqtt.c"
         "trash_bin_fsm.c"
+        "anim_storage.c"
+        "lan_server.c"
     INCLUDE_DIRS "."
     PRIV_REQUIRES
         driver
@@ -27,4 +29,9 @@ idf_component_register(
         esp_netif
         bt
         nvs_flash
+        esp_http_server
+        mdns
+        esp_http_client
+        esp_partition
+        esp_crc
 )
