@@ -18,7 +18,7 @@ esp_err_t anim_storage_init(void)
         return ESP_OK;
     }
 
-    s_anim_partition = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, 0x99, "anim_data");
+    s_anim_partition = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, (esp_partition_subtype_t)0x99, "anim_data");
     if (s_anim_partition == NULL) {
         s_anim_partition = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_ANY, "anim_data");
     }

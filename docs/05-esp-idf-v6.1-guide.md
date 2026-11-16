@@ -35,7 +35,7 @@ In ESP-IDF `^6.1`, the legacy umbrella `driver` component no longer implicitly e
 | **mDNS Service Responder** | `mdns` | `mdns.h` |
 | **HTTP Client (Remote Fetch)** | `esp_http_client` | `esp_http_client.h` |
 | **Flash Partition Manager** | `esp_partition` | `esp_partition.h` |
-| **ROM / Hardware CRC32** | `esp_rom` / `esp_crc` | `esp_rom_crc.h` |
+| **ROM / Hardware CRC32** | `esp_rom` | `esp_rom_crc.h` |
 
 ### 1.3 Managed Components (`main/idf_component.yml`)
 In ESP-IDF `^6.1`, `cJSON`, `led_strip`, `mqtt` (`esp-mqtt`), and `mdns` are distributed via the IDF Component Registry (`idf_component.yml`):

@@ -33,5 +33,4 @@ idf_component_register(
         mdns
         esp_http_client
         esp_partition
-        esp_crc
 )
