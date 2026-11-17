@@ -357,6 +357,31 @@ void main() {
       expect(resetResult, isFalse);
       expect(service.statusMessage, contains('Cannot reset'));
     });
+
+    test('Honors explicit TransportPreference pinning over Auto priority', () async {
+      SharedPreferences.setMockInitialValues({});
+      final service = WasteConnectionService();
+      service.setMockTransports(
+        lan: true,
+        mqtt: true,
+        ble: true,
+        lanHost: '192.168.1.100',
+      );
+
+      expect(service.transportMode, TransportMode.lan);
+
+      await service.setTransportPreference(TransportPreference.mqtt);
+      expect(service.transportMode, TransportMode.mqtt);
+
+      await service.setTransportPreference(TransportPreference.ble);
+      expect(service.transportMode, TransportMode.ble);
+
+      service.setMockTransports(ble: false);
+      expect(service.transportMode, TransportMode.disconnected);
+
+      await service.setTransportPreference(TransportPreference.auto);
+      expect(service.transportMode, TransportMode.lan);
+    });
   });
 
   group('AnimationUploadSheet & Dashboard UI Integration Tests', () {
@@ -389,6 +414,53 @@ void main() {
       expect(find.text('Pick GIF File'), findsOneWidget);
       expect(find.text('Demo Pattern'), findsOneWidget);
       expect(find.byKey(const Key('reset_anim_button')), findsOneWidget);
+    });
+
+    testWidgets('Renders Connection Selector and LAN HTTP controls inside Connectivity sheet',
+        (WidgetTester tester) async {
+      SharedPreferences.setMockInitialValues({});
+      final service = WasteConnectionService();
+      service.setMockTransports(
+        lan: true,
+        mqtt: true,
+        ble: false,
+        lanHost: '192.168.1.50',
+      );
+
+      await tester.pumpWidget(WasteCompanionApp(service: service));
+      await tester.pumpAndSettle();
+
+      expect(find.text('LAN (Local)'), findsOneWidget);
+
+      final connButtonFinder = find.byTooltip('Connections (LAN, MQTT, BLE)');
+      expect(connButtonFinder, findsOneWidget);
+      await tester.tap(connButtonFinder);
+      await tester.pumpAndSettle();
+
+      expect(find.text('Tri-Mode Connectivity & Setup'), findsOneWidget);
+      expect(find.byKey(const Key('transport_selector')), findsOneWidget);
+      expect(find.byKey(const Key('lan_host_field')), findsOneWidget);
+      expect(find.byKey(const Key('lan_port_field')), findsOneWidget);
+      expect(find.byKey(const Key('connect_lan_button')), findsOneWidget);
+      expect(find.byKey(const Key('probe_mdns_button')), findsOneWidget);
+      expect(find.byKey(const Key('disconnect_lan_button')), findsOneWidget);
+
+      // Tap "Use .local" quick-fill chip
+      await tester.tap(find.byKey(const Key('use_mdns_local_button')));
+      await tester.pumpAndSettle();
+      expect(find.text('smartbin_s3.local'), findsOneWidget);
+
+      // Switch active selector from Auto to MQTT and verify mode updates
+      await tester.tap(find.text('MQTT'));
+      await tester.pumpAndSettle();
+      expect(service.preferredTransport, TransportPreference.mqtt);
+      expect(service.transportMode, TransportMode.mqtt);
+
+      // Disconnect LAN and confirm LAN status pill updates
+      await tester.tap(find.byKey(const Key('disconnect_lan_button')));
+      await tester.pumpAndSettle();
+      expect(service.isLanConnected, isFalse);
+      expect(find.byKey(const Key('disconnect_lan_button')), findsNothing);
     });
 
     testWidgets('Renders preview canvas, scrubbing slider, and handles demo pattern',

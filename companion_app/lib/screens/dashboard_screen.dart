@@ -87,7 +87,7 @@ class DashboardScreen extends StatelessWidget {
                 },
               ),
               IconButton(
-                tooltip: 'BLE Provisioning & MQTT Broker',
+                tooltip: 'Connections (LAN, MQTT, BLE)',
                 icon: const Icon(Icons.settings_input_antenna),
                 onPressed: () {
                   showModalBottomSheet(

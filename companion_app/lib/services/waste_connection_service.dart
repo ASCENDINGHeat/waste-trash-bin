@@ -16,6 +16,9 @@ import '../models/telemetry.dart';
 /// Priority 3: BLE (Direct GATT 0xFF00)
 enum TransportMode { disconnected, lan, mqtt, ble }
 
+/// User-selectable transport routing preference.
+enum TransportPreference { auto, lan, mqtt, ble }
+
 class WasteConnectionService extends ChangeNotifier {
   static const int maxHistoryEntries = 500;
   static const String _prefsHistoryKey = 'waste_telemetry_history_v1';
@@ -23,13 +26,17 @@ class WasteConnectionService extends ChangeNotifier {
   static const String _prefsDeviceIdKey = 'waste_device_id';
   static const String _prefsLanHostKey = 'waste_lan_host';
   static const String _prefsLanPortKey = 'waste_lan_port';
+  static const String _prefsTransportPrefKey = 'waste_transport_preference';
 
   String _mqttBrokerUri = 'mqtt://broker.emqx.io:1883';
   String _targetDeviceId = '';
   String _lanHost = '';
   int _lanPort = 80;
+  String _lanDeviceIp = '';
+  TransportPreference _preferredTransport = TransportPreference.auto;
 
   bool _lanConnected = false;
+  bool _lanConnecting = false;
   bool _mqttConnected = false;
   bool _bleConnected = false;
   bool _nodeOnlineLwt = false;
@@ -54,25 +61,78 @@ class WasteConnectionService extends ChangeNotifier {
   String get mqttBrokerUri => _mqttBrokerUri;
   String get lanHost => _lanHost;
   int get lanPort => _lanPort;
+  String get lanDeviceIp => _lanDeviceIp;
+  TransportPreference get preferredTransport => _preferredTransport;
   String get activeDeviceId => _latestTelemetry?.deviceId.isNotEmpty == true
       ? _latestTelemetry!.deviceId
       : (_targetDeviceId.isNotEmpty ? _targetDeviceId : 'smartbin_s3');
 
   bool get isLanConnected => _lanConnected;
+  bool get isLanConnecting => _lanConnecting;
   bool get isMqttConnected => _mqttConnected;
   bool get isBleConnected => _bleConnected;
-  bool get isNodeOnline => _lanConnected || _nodeOnlineLwt || _bleConnected;
+  bool get isNodeOnline {
+    switch (_preferredTransport) {
+      case TransportPreference.lan:
+        return _lanConnected;
+      case TransportPreference.mqtt:
+        return _nodeOnlineLwt;
+      case TransportPreference.ble:
+        return _bleConnected;
+      case TransportPreference.auto:
+        return _lanConnected || _nodeOnlineLwt || _bleConnected;
+    }
+  }
   String get statusMessage => _statusMessage;
   WasteTelemetry? get latestTelemetry => _latestTelemetry;
   List<WasteTelemetry> get history => List.unmodifiable(_history);
 
   /// Tri-Mode Transport Priority Resolver:
-  /// Priority 1 (Local LAN) -> Priority 2 (Cloud MQTT) -> Priority 3 (Direct BLE)
+  /// Auto: Priority 1 (Local LAN) -> Priority 2 (Cloud MQTT) -> Priority 3 (Direct BLE)
+  /// Manual: Uses only the selected transport without silent fallback.
   TransportMode get transportMode {
-    if (_lanConnected) return TransportMode.lan;
-    if (_mqttConnected) return TransportMode.mqtt;
-    if (_bleConnected) return TransportMode.ble;
-    return TransportMode.disconnected;
+    switch (_preferredTransport) {
+      case TransportPreference.lan:
+        return _lanConnected ? TransportMode.lan : TransportMode.disconnected;
+      case TransportPreference.mqtt:
+        return _mqttConnected ? TransportMode.mqtt : TransportMode.disconnected;
+      case TransportPreference.ble:
+        return _bleConnected ? TransportMode.ble : TransportMode.disconnected;
+      case TransportPreference.auto:
+        if (_lanConnected) return TransportMode.lan;
+        if (_mqttConnected) return TransportMode.mqtt;
+        if (_bleConnected) return TransportMode.ble;
+        return TransportMode.disconnected;
+    }
+  }
+
+  Future<void> setTransportPreference(TransportPreference pref) async {
+    _preferredTransport = pref;
+    switch (pref) {
+      case TransportPreference.auto:
+        _statusMessage = 'Transport: Auto (LAN -> MQTT -> BLE)';
+        break;
+      case TransportPreference.lan:
+        _statusMessage = _lanConnected
+            ? 'Transport pinned to Local LAN (http://$_lanHost:$_lanPort)'
+            : 'Transport pinned to Local LAN (Disconnected)';
+        break;
+      case TransportPreference.mqtt:
+        _statusMessage = _mqttConnected
+            ? 'Transport pinned to Cloud MQTT'
+            : 'Transport pinned to Cloud MQTT (Disconnected)';
+        break;
+      case TransportPreference.ble:
+        _statusMessage = _bleConnected
+            ? 'Transport pinned to Direct BLE'
+            : 'Transport pinned to Direct BLE (Disconnected)';
+        break;
+    }
+    notifyListeners();
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_prefsTransportPrefKey, pref.name);
+    } catch (_) {}
   }
 
   Future<void> init() async {
@@ -81,6 +141,16 @@ class WasteConnectionService extends ChangeNotifier {
     _targetDeviceId = prefs.getString(_prefsDeviceIdKey) ?? '';
     _lanHost = prefs.getString(_prefsLanHostKey) ?? '';
     _lanPort = prefs.getInt(_prefsLanPortKey) ?? 80;
+
+    final prefName = prefs.getString(_prefsTransportPrefKey);
+    if (prefName != null) {
+      for (final v in TransportPreference.values) {
+        if (v.name == prefName) {
+          _preferredTransport = v;
+          break;
+        }
+      }
+    }
 
     final rawList = prefs.getStringList(_prefsHistoryKey) ?? [];
     _history.clear();
@@ -94,6 +164,12 @@ class WasteConnectionService extends ChangeNotifier {
       _latestTelemetry = _history.last;
     }
     notifyListeners();
+
+    if (_lanHost.isNotEmpty &&
+        (_preferredTransport == TransportPreference.auto ||
+            _preferredTransport == TransportPreference.lan)) {
+      unawaited(connectLan());
+    }
   }
 
   Future<void> _recordTelemetry(WasteTelemetry t) async {
@@ -122,10 +198,27 @@ class WasteConnectionService extends ChangeNotifier {
   // -------------------- Priority 1: Local LAN HTTP Transport --------------------
 
   Future<bool> connectLan({String? host, int? port}) async {
-    if (host != null && host.trim().isNotEmpty) {
-      _lanHost = host.trim();
+    if (host != null) {
+      var cleaned = host.trim();
+      cleaned = cleaned.replaceFirst(
+          RegExp(r'^https?://', caseSensitive: false), '');
+      final slashIdx = cleaned.indexOf('/');
+      if (slashIdx != -1) {
+        cleaned = cleaned.substring(0, slashIdx);
+      }
+      final colonIdx = cleaned.lastIndexOf(':');
+      if (colonIdx > 0 && colonIdx < cleaned.length - 1) {
+        final maybePort = int.tryParse(cleaned.substring(colonIdx + 1));
+        if (maybePort != null && maybePort > 0 && maybePort <= 65535) {
+          cleaned = cleaned.substring(0, colonIdx);
+          port ??= maybePort;
+        }
+      }
+      if (cleaned.isNotEmpty) {
+        _lanHost = cleaned;
+      }
     }
-    if (port != null && port > 0) {
+    if (port != null && port > 0 && port <= 65535) {
       _lanPort = port;
     }
 
@@ -135,38 +228,69 @@ class WasteConnectionService extends ChangeNotifier {
       return false;
     }
 
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_prefsLanHostKey, _lanHost);
-    await prefs.setInt(_prefsLanPortKey, _lanPort);
-
+    _lanConnecting = true;
     _statusMessage = 'Connecting LAN (http://$_lanHost:$_lanPort)...';
     notifyListeners();
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_prefsLanHostKey, _lanHost);
+      await prefs.setInt(_prefsLanPortKey, _lanPort);
+    } catch (_) {}
 
     try {
       final uri = Uri.parse('http://$_lanHost:$_lanPort/api/status');
       final resp = await http.get(uri).timeout(const Duration(seconds: 4));
       if (resp.statusCode == 200) {
         _lanConnected = true;
+        try {
+          final decoded = jsonDecode(resp.body);
+          if (decoded is Map<String, dynamic>) {
+            final devId = decoded['device_id'] as String?;
+            if (devId != null && devId.isNotEmpty && _targetDeviceId.isEmpty) {
+              _targetDeviceId = devId;
+            }
+            final ip = decoded['ip'] as String?;
+            if (ip != null && ip.isNotEmpty) {
+              _lanDeviceIp = ip;
+            }
+          }
+        } catch (_) {}
+
         final parsed = WasteTelemetry.tryParse(resp.body);
         if (parsed != null) {
           await _recordTelemetry(parsed);
         }
         _statusMessage = 'LAN Connected (http://$_lanHost:$_lanPort)';
         _startLanPolling();
-        notifyListeners();
         return true;
       } else {
         _lanConnected = false;
         _statusMessage = 'LAN Error: HTTP ${resp.statusCode}';
-        notifyListeners();
         return false;
       }
     } catch (e) {
       _lanConnected = false;
       _statusMessage = 'LAN Connection Failed: $e';
-      notifyListeners();
       return false;
+    } finally {
+      _lanConnecting = false;
+      notifyListeners();
     }
+  }
+
+  /// Probes mDNS .local hostnames (e.g. smartbin_s3_XXXXXX.local) for port 80.
+  Future<bool> probeMdnsLan({int port = 80}) async {
+    final candidates = <String>[
+      if (activeDeviceId.isNotEmpty) '$activeDeviceId.local',
+      if (_lanHost.isNotEmpty && _lanHost != '$activeDeviceId.local') _lanHost,
+      if (activeDeviceId != 'smartbin_s3') 'smartbin_s3.local',
+    ];
+    for (final candidate in candidates.toSet()) {
+      final ok = await connectLan(host: candidate, port: port);
+      if (ok) return true;
+    }
+    return false;
   }
 
   void _startLanPolling() {
@@ -476,14 +600,26 @@ class WasteConnectionService extends ChangeNotifier {
 
   // -------------------- Tri-Mode Unified Command Routing --------------------
 
-  /// Sends a command dictionary honoring Tri-Mode priority:
+  bool get _allowLan =>
+      _preferredTransport == TransportPreference.auto ||
+      _preferredTransport == TransportPreference.lan;
+
+  bool get _allowMqtt =>
+      _preferredTransport == TransportPreference.auto ||
+      _preferredTransport == TransportPreference.mqtt;
+
+  bool get _allowBle =>
+      _preferredTransport == TransportPreference.auto ||
+      _preferredTransport == TransportPreference.ble;
+
+  /// Sends a command dictionary honoring Tri-Mode priority and user selection:
   /// Priority 1 (LAN HTTP) -> Priority 2 (Cloud MQTT) -> Priority 3 (Direct BLE)
   Future<bool> sendCommandMap(Map<String, dynamic> cmdPayload) async {
     final rawJson = jsonEncode(cmdPayload);
     final cmdName = cmdPayload['cmd'] ?? cmdPayload['action'] ?? 'cmd';
 
     // 1. Priority 1: Local LAN HTTP REST
-    if (_lanConnected && _lanHost.isNotEmpty) {
+    if (_allowLan && _lanConnected && _lanHost.isNotEmpty) {
       try {
         Uri uri;
         String? body;
@@ -523,13 +659,13 @@ class WasteConnectionService extends ChangeNotifier {
           return true;
         }
       } catch (_) {
-        // LAN failed; fall through to Priority 2 (MQTT)
+        // LAN failed; fall through to Priority 2 (MQTT) if Auto
         _lanConnected = false;
       }
     }
 
     // 2. Priority 2: Cloud MQTT
-    if (_mqttConnected && _mqttClient != null) {
+    if (_allowMqtt && _mqttConnected && _mqttClient != null) {
       try {
         final builder = MqttClientPayloadBuilder();
         builder.addUTF8String(rawJson);
@@ -539,12 +675,12 @@ class WasteConnectionService extends ChangeNotifier {
         notifyListeners();
         return true;
       } catch (_) {
-        // Fall through to Priority 3 (BLE)
+        // Fall through to Priority 3 (BLE) if Auto
       }
     }
 
     // 3. Priority 3: Direct BLE GATT 0xFF06
-    if (_bleConnected && _chrCmd != null) {
+    if (_allowBle && _bleConnected && _chrCmd != null) {
       try {
         await _chrCmd!.write(utf8.encode(rawJson), withoutResponse: false);
         _statusMessage = 'Sent "$cmdName" via BLE (0xFF06)';
@@ -585,7 +721,7 @@ class WasteConnectionService extends ChangeNotifier {
     }
 
     // Priority 1: Local LAN HTTP Upload
-    if (_lanConnected && _lanHost.isNotEmpty) {
+    if (_allowLan && _lanConnected && _lanHost.isNotEmpty) {
       try {
         _statusMessage = 'Uploading ${wbinBytes.length} bytes via LAN HTTP...';
         notifyListeners();
@@ -629,7 +765,7 @@ class WasteConnectionService extends ChangeNotifier {
     }
 
     // Priority 3: BLE GATT Characteristic 0xFF07 Chunked Upload
-    if (_bleConnected && _chrUpload != null) {
+    if (_allowBle && _bleConnected && _chrUpload != null) {
       try {
         _statusMessage = 'Uploading ${wbinBytes.length} bytes via BLE 0xFF07...';
         notifyListeners();
@@ -664,7 +800,7 @@ class WasteConnectionService extends ChangeNotifier {
   /// Resets the active OLED animation back to the compiled Dancing Cat mascot.
   Future<bool> resetCustomAnimation() async {
     // Priority 1: LAN HTTP POST /api/oled/reset
-    if (_lanConnected && _lanHost.isNotEmpty) {
+    if (_allowLan && _lanConnected && _lanHost.isNotEmpty) {
       try {
         final uri = Uri.parse('http://$_lanHost:$_lanPort/api/oled/reset');
         final resp = await http.post(
@@ -683,12 +819,12 @@ class WasteConnectionService extends ChangeNotifier {
     }
 
     // Priority 2: MQTT reset_anim
-    if (_mqttConnected && _mqttClient != null) {
+    if (_allowMqtt && _mqttConnected && _mqttClient != null) {
       return sendCommandMap({'cmd': 'reset_anim'});
     }
 
     // Priority 3: BLE GATT reset_anim
-    if (_bleConnected && _chrCmd != null) {
+    if (_allowBle && _bleConnected && _chrCmd != null) {
       return sendCommandMap({'cmd': 'reset_anim'});
     }
 
@@ -706,12 +842,14 @@ class WasteConnectionService extends ChangeNotifier {
     bool? ble,
     String? lanHost,
     int? lanPort,
+    TransportPreference? preferredTransport,
   }) {
     if (lan != null) _lanConnected = lan;
     if (mqtt != null) _mqttConnected = mqtt;
     if (ble != null) _bleConnected = ble;
     if (lanHost != null) _lanHost = lanHost;
     if (lanPort != null) _lanPort = lanPort;
+    if (preferredTransport != null) _preferredTransport = preferredTransport;
     notifyListeners();
   }
 }
