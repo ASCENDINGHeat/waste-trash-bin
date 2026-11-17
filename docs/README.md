@@ -23,7 +23,7 @@ Complete engineering and architectural reference for **W.A.S.T.E.** (**Waste Aut
 
 ## Quick Hardware & Pin Summary
 
-- **System Name**: **W.A.S.T.E.** (*Waste Automation and Sensing Technology Engine*) — **`v1.1.0`**
+- **System Name**: **W.A.S.T.E.** (*Waste Automation and Sensing Technology Engine*) — **`v2.0.0`**
 - **MCU**: `ESP32-S3-WROOM-1-N16R8` (`YD-ESP32-23` DevKitC-1 clone, 16 MB QIO Flash, 8 MB Octal PSRAM)
 - **ESP-IDF Version**: `^6.1` (`v6.1` Stable, CMake $\ge 3.22.1$)
 - **PIR Motion Sensor (`HC-SR501`)**: `OUT -> GPIO 2` (`RTC_GPIO2`)
@@ -31,4 +31,4 @@ Complete engineering and architectural reference for **W.A.S.T.E.** (**Waste Aut
 - **Micro Servo (`SG90`)**: `PWM -> GPIO 21` (50 Hz 14-bit LEDC)
 - **I2C OLED (`SSD1306` / `SH1106`)**: `SCL -> GPIO 6`, `SDA -> GPIO 7` (400 kHz `esp_driver_i2c`, Core 1 GIF Engine)
 - **Onboard Status RGB LED (`WS2812B`)**: `GPIO 48` (RMT `led_strip`)
-- **Onboard Provision Button (`BOOT`)**: `GPIO 0` (Short press = Enable BLE advertising; 3s hold = Reset Wi-Fi NVS)
+- **Onboard Provision Button (`BOOT`)**: `GPIO 0` (Short press = Enable BLE + `[i] BLE & STATUS` modal; 3s hold = Countdown & Wi-Fi NVS reset)

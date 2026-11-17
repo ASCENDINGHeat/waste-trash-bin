@@ -71,14 +71,17 @@ waste-trash-bin/
 ├── companion_app/                       # Cross-platform Flutter Companion App (Android / iOS)
 │   ├── pubspec.yaml                     # Dependencies (http, image, file_picker, mqtt_client, flutter_blue_plus)
 │   ├── lib/
+│   │   ├── models/
+│   │   │   ├── telemetry.dart           # WasteTelemetry & WasteBinConfig models
+│   │   │   └── device_session.dart      # WasteDeviceSession, TransportMode & TransportPreference
 │   │   ├── services/
 │   │   │   ├── wbin_encoder.dart        # GIF decoding, Atkinson 1-bit dithering, WGF1 packing & CRC32
-│   │   │   └── waste_connection_service.dart # Tri-Mode Transport Router (LAN -> MQTT -> BLE)
+│   │   │   └── waste_connection_service.dart # Multi-Device Tri-Mode Router (LAN -> MQTT -> BLE)
 │   │   └── screens/
 │   │       ├── animation_upload_sheet.dart   # Animation Uploader UI, virtual OLED canvas & scrub slider
-│   │       ├── dashboard_screen.dart         # Material 3 dashboard, Tri-Mode badges & telemetry cards
-│   │       └── ...
-│   └── test/widget_test.dart            # 16 automated unit & widget tests across 7 test groups
+│   │       ├── ble_provision_sheet.dart      # Tri-Mode Connection Selector, LAN HTTP UI & BLE provisioning
+│   │       └── dashboard_screen.dart         # Material 3 dashboard, Tri-Mode badges & telemetry cards
+│   └── test/widget_test.dart            # 23 automated unit & widget tests across 8 test groups
 ├── tools/                               # Tooling & deterministic verification scripts
 │   ├── verify_gap_b.mjs                 # 4-tier E2E verification suite for WGF1, CRC32, and static compliance
 │   ├── verify_partitions.mjs            # Partition geometry and 4KB/64KB alignment verifier

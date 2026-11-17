@@ -42,7 +42,7 @@ Designed from the ground up to eliminate common failure modes of consumer "smart
 - **Priority 1 — Embedded Local LAN HTTP & mDNS (`esp_http_server`)**: Sub-10ms response on port 80 with mDNS advertisement (`_waste._tcp` / `smartbin_s3_<mac>`). Exposes REST endpoints for telemetry (`GET /api/status`), custom animation streaming (`POST /api/oled/upload`), mascot reset (`POST /api/oled/reset`), lid actuation (`POST /api/lid`), manual ultrasonic ping (`POST /api/measure`), and runtime threshold updates (`POST /api/config`).
 - **Priority 2 — Real-Time Cloud MQTT (`esp-mqtt`)**: Publishes structured JSON telemetry (`smartbin/<id>/telemetry`), retained full-bin alerts (`smartbin/<id>/alert`), and Last Will & Testament state (`smartbin/<id>/status`), with built-in support for **Flespi (`mqtt.flespi.io`)**, EMQX, and Mosquitto. Extends remote commands with `"fetch_anim"` (background HTTP client download) and `"reset_anim"`.
 - **256-Event Octal PSRAM Ring Buffer**: Never loses a telemetry event during Wi-Fi outages—records are buffered in **8 MB Octal PSRAM** (and lifetime `open_cycles` persisted in Flash NVS) and flushed chronologically the instant MQTT reconnects.
-- **Priority 3 — Direct BLE GATT Provisioning & Failover (`NimBLE`)**: Advertises custom BLE GATT service (`0xFF00`–`0xFF07`) on first boot, whenever Wi-Fi drops, or when the onboard **`BOOT` (`GPIO 0`)** button is pressed. Characteristic `0xFF07` supports 244-byte chunked `.wbin` animation streaming with real-time OLED upload progress HUD display.
+- **Priority 3 — Direct BLE GATT Provisioning & Failover (`NimBLE`)**: Advertises custom BLE GATT service (`0xFF00`–`0xFF07`) on first boot, whenever Wi-Fi drops, or via the dedicated Core 0 **`BOOT` (`GPIO 0`)** task (`boot_btn_task`: short press enables BLE advertising & displays `[i] BLE & STATUS` on OLED; 3-second hold shows a live `Reset WiFi: X.Xs` countdown then wipes Wi-Fi NVS). Characteristic `0xFF07` supports 244-byte chunked `.wbin` animation streaming with real-time OLED upload progress HUD display.
 
 ### 4. Dedicated `Core 1` OLED HUD & Custom `.wbin` Animation Engine
 - **100% Decoupled Visual Pipeline**: Pinned exclusively to **Xtensa LX7 `Core 1`**, rendering a context-aware Smart HUD ($128 \times 64$, `SCL = GPIO 6`, `SDA = GPIO 7` @ `400 kHz` I2C) composited over animated frames directly from **8 MB Octal PSRAM** with zero frame drops during network or sensor operations.
@@ -51,10 +51,10 @@ Designed from the ground up to eliminate common failure modes of consumer "smart
 - **Live Upload Progress HUD**: Visual overlay bar (`"UPLOADING GIF: XX%"`) with transport badge (`LAN`, `BLE`, or `MQTT`) rendered live on Core 1 during animation transfers.
 
 ### 5. Cross-Platform Flutter Companion App (`companion_app/`)
-- **Tri-Mode Automatic Transport Router**: Connects via Local LAN first, falling back to Cloud MQTT and BLE GATT `0xFF00`.
+- **Multi-Device Tri-Mode Connection Backend & Selector (`WasteConnectionService` + `WasteDeviceSession`)**: Manages concurrent per-node sessions (`Auto / LAN / MQTT / BLE` selector) connecting via Local LAN HTTP (IP or `.local` mDNS probe) first, falling back to Cloud MQTT (`smartbin/+`) and BLE GATT `0xFF00`.
 - **In-App GIF to `.wbin` Converter (`WbinEncoder`)**: Mobile-side conversion pipeline with box downsampling, Atkinson 1-bit error-diffusion dithering, virtual 128x64 OLED canvas preview (`OledCanvasPainter`), and IEEE 802.3 CRC32 container packing.
 - **Animation Upload Sheet & Mascot Reset**: Modal UI with GIF picker, frame scrub slider, FPS control, live upload progress bar, and 1-tap "Reset to Mascot" action.
-- **Zero-Touch Provisioning & Remote Control**: Scan & provision Wi-Fi/Flespi MQTT credentials over BLE, remotely open the lid (`open_lid`), trigger instant ultrasonic pings (`measure_now`), calibrate bin depth ($10\text{–}30\text{ cm}$), and view historical fill-level trend charts stored locally on the phone.
+- **Zero-Touch Provisioning & Remote Control**: Scan & provision Wi-Fi/Flespi MQTT credentials over BLE, configure Local LAN endpoints, remotely open the lid (`open_lid`), trigger instant ultrasonic pings (`measure_now`), calibrate bin depth ($10\text{–}30\text{ cm}$), and view historical fill-level trend charts stored locally per device on the phone.
 
 ---
 
@@ -106,7 +106,7 @@ flowchart TD
 | **OLED Display** | $128 \times 64$ I2C OLED | `SCL` | **`GPIO 6`** | 400 kHz `esp_driver_i2c` Master Clock |
 | **OLED Display** | $128 \times 64$ I2C OLED | `SDA` | **`GPIO 7`** | 400 kHz `esp_driver_i2c` Master Data |
 | **Status LED** | Onboard `WS2812B` | `DIN` | **`GPIO 48`** | RMT `espressif/led_strip` (bridge `RGB` pad on board) |
-| **Provision Button** | Onboard `BOOT` Key | `BTN` | **`GPIO 0`** | Short press = Enable BLE; 3s hold = Reset Wi-Fi NVS |
+| **Provision Button** | Onboard `BOOT` Key | `BTN` | **`GPIO 0`** | Short press = Enable BLE + info modal; 3s hold = Countdown & Wi-Fi reset |
 | **5V Power Gate** | Boost `EN` / MOSFET | `EN` | **`GPIO 4`** *(optional)* | Cuts 5V idle draw during Deep Sleep |
 
 ---

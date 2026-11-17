@@ -4,13 +4,14 @@
 
 The **W.A.S.T.E. Companion App** is a cross-platform **Flutter** mobile application (targeting **Android** and **iOS**) located in [`companion_app/`](../companion_app/) inside the monorepo.
 
-In **v2.0.0**, the app expands beyond dual-transport monitoring into a comprehensive IoT hub with local network discovery and client-side media transcoding:
-1. **Tri-Mode Connection Router (`WasteConnectionService`)**: Automatically resolves and connects across three communication channels: **Priority 1 (Local LAN)** $\rightarrow$ **Priority 2 (Cloud MQTT)** $\rightarrow$ **Priority 3 (Direct BLE GATT)**.
-2. **In-App GIF to `.wbin` Converter (`WbinEncoder`)**: Transcodes user-selected `.gif` files into validated $128 \times 64$ monochrome animations using pure-Dart box downsampling, Atkinson 1-bit error-diffusion dithering, and IEEE 802.3 CRC32 container packing without external C bindings or server dependencies.
-3. **Live Virtual OLED Preview & Animation Uploader (`AnimationUploadSheet`)**: Real-time 1-bit canvas preview (`OledCanvasPainter`), frame scrub slider, playback controls, live upload progress bar, and 1-tap "Reset to Mascot" action.
-4. **Zero-Touch BLE Provisioning (`NimBLE` `0xFF00`)**: Scans for nearby `smartbin_s3_*` nodes and provisions Wi-Fi SSID, Wi-Fi Password, and MQTT Broker URI directly into the ESP32-S3's NVS flash without recompiling firmware.
-5. **Multi-Transport Remote Actuation & Sensor Calibration**: Sends instant JSON commands (`open_lid`, `measure_now`, `configure`, `reset_anim`) over **Local LAN HTTP**, **Cloud MQTT**, or **BLE GATT**.
-6. **Off-Device Telemetry History & Trend Analytics**: Persists incoming telemetry records locally on the phone (`SharedPreferences`), providing historical fill-rate charts without wearing out the ESP32-S3's internal NOR flash.
+In **v2.0.0**, the app expands beyond single-node dual-transport monitoring into a comprehensive multi-device IoT hub with local network discovery and client-side media transcoding:
+1. **Multi-Device Tri-Mode Connection Backend (`WasteConnectionService` + `WasteDeviceSession`)**: Manages concurrent per-node sessions (`devices`, `activeDevice`, `registerDevice`, `selectActiveDevice`, `removeDevice`) across **Priority 1 (Local LAN)** $\rightarrow$ **Priority 2 (Cloud MQTT `smartbin/+`)** $\rightarrow$ **Priority 3 (Direct BLE GATT)** with automatic V1-to-V2 `SharedPreferences` persistence migration.
+2. **Active Connection Selector & Local LAN Setup UI (`BleProvisionSheet`)**: Provides an `Auto / LAN / MQTT / BLE` (`TransportPreference`) segmented selector, live per-transport link pills, manual Host IP / `.local` hostname & port fields, `Use .local` quick-fill, `Find .local` probe, and startup LAN auto-reconnect.
+3. **In-App GIF to `.wbin` Converter (`WbinEncoder`)**: Transcodes user-selected `.gif` files into validated $128 \times 64$ monochrome animations using pure-Dart box downsampling, Atkinson 1-bit error-diffusion dithering, and IEEE 802.3 CRC32 container packing without external C bindings or server dependencies.
+4. **Live Virtual OLED Preview & Animation Uploader (`AnimationUploadSheet`)**: Real-time 1-bit canvas preview (`OledCanvasPainter`), frame scrub slider, playback controls, live upload progress bar, and 1-tap "Reset to Mascot" action.
+5. **Zero-Touch BLE Provisioning (`NimBLE` `0xFF00`)**: Scans for nearby `SmartBin-S3-*` / `smartbin_s3_*` nodes and provisions Wi-Fi SSID, Wi-Fi Password, and MQTT Broker URI directly into the ESP32-S3's NVS flash without recompiling firmware.
+6. **Multi-Transport Remote Actuation & Sensor Calibration**: Sends instant JSON commands (`open_lid`, `measure_now`, `configure`, `reset_anim`) routed to the active (or explicit `deviceId`) node over **Local LAN HTTP**, **Cloud MQTT**, or **BLE GATT**.
+7. **Off-Device Telemetry History & Trend Analytics**: Persists incoming telemetry records locally per device (`SharedPreferences` V2 keys, 500 entries/node), providing historical fill-rate charts without wearing out the ESP32-S3's internal NOR flash.
 
 ---
 
@@ -195,17 +196,18 @@ companion_app/
 ├── lib/
 │   ├── main.dart                             # App entrypoint & W.A.S.T.E. Dark Material 3 theme
 │   ├── models/
-│   │   └── telemetry.dart                    # WasteTelemetry & WasteBinConfig models (with oled_ui_mode)
+│   │   ├── telemetry.dart                    # WasteTelemetry & WasteBinConfig models (with oled_ui_mode)
+│   │   └── device_session.dart               # WasteDeviceSession, TransportMode & TransportPreference
 │   ├── services/
-│   │   ├── waste_connection_service.dart     # Tri-Mode Router (Priority 1 LAN -> Priority 2 MQTT -> Priority 3 BLE)
+│   │   ├── waste_connection_service.dart     # Multi-Device Tri-Mode Router (LAN -> MQTT -> BLE)
 │   │   └── wbin_encoder.dart                 # Pure-Dart GIF decoder, Atkinson ditherer, WGF1 packing & CRC32
 │   └── screens/
 │       ├── dashboard_screen.dart             # Main fill gauge, telemetry cards, trend chart & custom anim launcher
 │       ├── animation_upload_sheet.dart       # Virtual OLED preview canvas, frame scrubbing & upload modal
-│       ├── ble_provision_sheet.dart          # BLE scanner, Flespi preset & Wi-Fi/MQTT NVS provisioning
+│       ├── ble_provision_sheet.dart          # Connection Selector, LAN HTTP setup, BLE scanner & NVS provisioning
 │       └── calibration_sheet.dart            # Ultrasonic depth (10-30cm), timer & OLED HUD idle selector
 └── test/
-    └── widget_test.dart                      # Comprehensive automated test suite (16 tests across 7 groups)
+    └── widget_test.dart                      # Comprehensive automated test suite (23 tests across 8 groups)
 ```
 
 ---
@@ -234,7 +236,7 @@ flutter build apk --release
 
 ## 8. Automated Test Suite (`test/widget_test.dart`)
 
-The test suite in `companion_app/test/widget_test.dart` contains **16 automated tests across 7 test groups**:
+The test suite in `companion_app/test/widget_test.dart` contains **23 automated tests across 8 test groups**:
 
 1. **Group 1 — Model Parsing & Validation**: Tests `WasteTelemetry.fromJson` field extraction and boundary clamping ($0\dots 100\%$, $10\dots 30\text{ cm}$).
 2. **Group 2 — Configuration Serialization**: Tests `WasteBinConfig` serialization including `oled_sleep_timeout_s` and `oled_ui_mode`.
@@ -247,10 +249,12 @@ The test suite in `companion_app/test/widget_test.dart` contains **16 automated 
    - Verifies rejection of frame overflow ($> 512$ frames), corrupted CRC32, and truncated payloads.
 6. **Group 6 — Tri-Mode Transport Router & Priority Fallback Tests**:
    - Confirms Priority 1 LAN precedence when LAN is connected.
-   - Validates automatic fallback to Priority 2 MQTT when LAN disconnects.
-   - Validates automatic fallback to Priority 3 BLE GATT when Wi-Fi/MQTT is offline.
-   - Tests command dispatch routing across transports.
-7. **Group 7 — AnimationUploadSheet & UI Integration Tests**:
+   - Validates automatic fallback to Priority 2 MQTT when LAN disconnects and Priority 3 BLE GATT when offline.
+   - Verifies explicit `TransportPreference` pinning (`Auto / LAN / MQTT / BLE`).
+7. **Group 7 — Multi-Device Connection Backend Tests**:
+   - Verifies isolated transport preference, LAN host/port, telemetry, and history across multiple registered smart bins (`WasteDeviceSession`).
+   - Tests active device switching, device removal fallback, and V1-to-V2 `SharedPreferences` persistence migration.
+8. **Group 8 — AnimationUploadSheet, Connectivity Selector & UI Integration Tests**:
    - Tests AppBar launcher button and bottom sheet modal presentation.
-   - Tests virtual OLED screen preview rendering and frame scrub slider interactions.
-   - Validates dynamic transport routing badges and "Reset to Mascot" triggers.
+   - Tests the Tri-Mode Connection Selector (`SegmentedButton`), `.local` quick-fill, LAN controls, and live LAN disconnect inside `BleProvisionSheet`.
+   - Tests virtual OLED screen preview rendering, frame scrub slider interactions, dynamic transport badges, and "Reset to Mascot" triggers.

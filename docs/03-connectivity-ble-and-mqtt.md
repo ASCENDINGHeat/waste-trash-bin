@@ -24,9 +24,13 @@ stateDiagram-v2
 
 ### 2.1 Why `NimBLE` on ESP-IDF `^6.1`
 - Uses $< 50\%$ of the RAM required by Bluedroid and integrates cleanly with ESP32-S3 Octal PSRAM (`CONFIG_BT_NIMBLE_ENABLED=y`).
-- Active in two scenarios:
+- Active in three scenarios:
   1. **Initial Setup**: First boot when NVS (`net_cfg` namespace) has no Wi-Fi credentials.
   2. **Wi-Fi Failover**: Automatically starts advertising (`SmartBin-S3-XXXX`) whenever Wi-Fi fails to connect after 5 attempts or stays disconnected for $> 30\text{ seconds}$.
+  3. **Onboard `BOOT` (`GPIO 0`) Button Task (`boot_btn_task`)**: Polled on Core 0 at `50 ms` with `100 ms` release debounce:
+     - **Short press ($< 3\text{ s}$)**: Starts BLE GATT advertising even if Wi-Fi is already connected and displays an `OLED_WARN_BLE_ACTIVE` (`[i] BLE & STATUS`) modal showing the BLE short ID and current IP (or `Ready to Pair!`).
+     - **Hold countdown ($0.8\text{–}2.9\text{ s}$)**: Updates the OLED with a live `Reset WiFi: X.Xs` countdown modal.
+     - **Long hold ($\ge 3.0\text{ s}$)**: Clears NVS Wi-Fi credentials, stops the LAN HTTP server, switches to BLE advertising, and pops `[i] WIFI CLEARED` (`OLED_WARN_WIFI_RESET`).
 
 ### 2.2 BLE GATT Custom Service (`UUID: 0xFF00` / 128-bit UUID)
 Provides both **Configuration (Provisioning)** and **Live Offline Telemetry**:
@@ -133,15 +137,17 @@ mqtt://<YOUR_FLESPI_TOKEN>@mqtt.flespi.io:1883
 ### Step 3 — Provision the ESP32-S3 & Connect the Companion App
 
 #### Option A: Via the W.A.S.T.E. Flutter Companion App (No Re-flashing Needed)
-1. Power on the `YD-ESP32-23` (`ESP32-S3`). If Wi-Fi is not yet configured, the onboard RGB LED (`GPIO 48`) glows **Blue** and advertises **`smartbin_s3_xxxxxx`** over BLE.
-2. Open the **W.A.S.T.E. Companion App** and tap the **Antenna icon (`Connectivity & BLE Provisioning`)** in the top-right corner.
-3. Under **1. MQTT Broker**:
+1. Power on the `YD-ESP32-23` (`ESP32-S3`). If Wi-Fi is not yet configured, the onboard RGB LED (`GPIO 48`) glows **Blue** and advertises **`SmartBin-S3-XXXX`** over BLE (short-press **`BOOT` (`GPIO 0`)** anytime to enable BLE advertising and show the BLE short ID on the OLED).
+2. Open the **W.A.S.T.E. Companion App** and tap the **Antenna icon (`Connections (LAN, MQTT, BLE)`)** or the transport status badge in the top-right corner.
+3. Under **1. Local LAN HTTP (`:80` / mDNS)** *(once on the same Wi-Fi)*:
+   - Enter the node's IP or tap **`Use .local`** / **`Find .local`**, then tap **`Connect LAN`**.
+4. Under **2. MQTT Broker**:
    - Tap **`Flespi Preset`** (sets `mqtt://mqtt.flespi.io:1883`).
    - Paste your 64-character token into **`Flespi Token / MQTT Username`**.
    - Tap **`Connect MQTT`** — the phone app automatically builds `mqtt://<TOKEN>@mqtt.flespi.io:1883` and connects using MQTT 3.1.1.
-4. Under **2. Direct BLE GATT (`0xFF00`)**:
-   - Tap **`Scan BLE`** and tap **`Connect`** next to `smartbin_s3_xxxxxx`.
-5. Under **3. Provision ESP32-S3 NVS over BLE**:
+5. Under **3. Direct BLE GATT (`0xFF00`)**:
+   - Tap **`Scan BLE`** and tap **`Connect`** next to `SmartBin-S3-XXXX`.
+6. Under **4. Provision ESP32-S3 NVS over BLE**:
    - Enter your **2.4 GHz Wi-Fi SSID** and **Password**.
    - Tap **`Write to ESP32-S3 NVS & Connect Wi-Fi`** — this writes your Wi-Fi credentials (`0xFF01`/`0xFF02`) and the full Flespi token URI (`0xFF03`) into the ESP32-S3's NVS flash and triggers immediate connection (`0xFF04`).
 

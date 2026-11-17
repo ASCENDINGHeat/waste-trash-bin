@@ -191,7 +191,8 @@ In addition to the 6 base screens above, the **Core 1** compositor supports a **
 | **`OLED_WARN_PIR_STUCK_TIMEOUT`** | `HC-SR501` (`GPIO 2`) held HIGH for $> 30\text{ s}$ safety cap | `[!] MOTION TIMEOUT` | `PIR active > 30 sec` / `Force closing lid...` | `3.5 s` |
 | **`OLED_WARN_SENSOR_ECHO_ERR`** | All 5 `HC-SR04` pings timed out (`ECHO` `GPIO 18` lost) | `[!] SENSOR ERROR` | `HC-SR04 echo timeout` / `Check TRIG:5 ECHO:18` | `4.5 s` |
 | **`OLED_WARN_WIFI_FAILOVER`** | Wi-Fi lost after 5 retries $\rightarrow$ switched to BLE `0xFF00` | `[!] WIFI OFFLINE` | `Switched to BLE Mode` / `Buffering in PSRAM` | `3.5 s` |
-| **`OLED_WARN_WIFI_RESET`** | `BOOT` (`GPIO 0`) held $3\text{ s}$ or remote `reset_wifi` cmd | `[i] WIFI CLEARED` | `NVS Wi-Fi erased` / `BLE Setup Active` | `4.0 s` |
+| **`OLED_WARN_WIFI_RESET`** | `BOOT` (`GPIO 0`) held $0.8\text{–}3\text{ s}$ (countdown) / $3\text{ s}$ erase / remote `reset_wifi` | `[i] WIFI CLEARED` | `Reset WiFi: X.Xs` countdown or `NVS WiFi cleared` / `BLE Setup Active` | `4.0 s` |
+| **`OLED_WARN_BLE_ACTIVE`** | Short press of `BOOT` (`GPIO 0`) button | `[i] BLE & STATUS` | `BLE: SmartBin-S3-XXXX` / `IP:<sta_ip>` or `Ready to Pair!` | `4.0 s` |
 
 ---
 
@@ -242,7 +243,8 @@ typedef enum {
     OLED_WARN_PIR_STUCK_TIMEOUT,   /* 30s PIR stuck-sensor safety close      */
     OLED_WARN_SENSOR_ECHO_ERR,     /* HC-SR04 ultrasonic timeout             */
     OLED_WARN_WIFI_FAILOVER,       /* Wi-Fi disconnected -> BLE failover     */
-    OLED_WARN_WIFI_RESET           /* NVS Wi-Fi credentials cleared          */
+    OLED_WARN_WIFI_RESET,          /* NVS Wi-Fi credentials cleared          */
+    OLED_WARN_BLE_ACTIVE           /* BOOT button pressed -> BLE/status info */
 } oled_warn_code_t;
 
 /**
@@ -266,9 +268,9 @@ void oled_hud_show_warning(oled_warn_code_t code, const char *line1, const char 
 | **`main/oled_font5x7.h`** | Compact `95-glyph` printable ASCII $5 \times 7$ bitmap font (`475 bytes` in Flash) + $1\times / 2\times$ text, progress bar, and drop-shadow modal box drawing helpers. | **Implemented** |
 | **`main/oled_dancing_cat.h / .c`** | `SCREEN_BOOT_SPLASH` animator, 5-mode HUD compositor, `oled_hud_show_warning()` popup modal overlay renderer, `s_composite_fb[1024]`, live upload progress bar compositor, and thread-safe mutex buffer swapping on **Core 1**. | **Implemented** |
 | **`main/anim_storage.h / .c`** | Flash partition I/O on `anim_data` (`0x310000`, 1 MB), 16-byte `WGF1` header & IEEE 802.3 CRC32 verification, PSRAM dynamic frame caching, and instant mascot fallback. | **Implemented** |
-| **`main/trash_bin_fsm.c` & `net_ble_mqtt.c`** | Push live state into `oled_hud_update()` and trigger warning modals (`NEAR_FULL`, `PIR_STUCK_TIMEOUT`, `SENSOR_ECHO_ERR`, `WIFI_FAILOVER`, `WIFI_RESET`). | **Implemented** |
+| **`main/trash_bin_fsm.c` & `net_ble_mqtt.c`** | Push live state into `oled_hud_update()`, run Core 0 `boot_btn_task` (`GPIO 0`), and trigger warning modals (`NEAR_FULL`, `PIR_STUCK_TIMEOUT`, `SENSOR_ECHO_ERR`, `WIFI_FAILOVER`, `WIFI_RESET`, `BLE_ACTIVE`). | **Implemented** |
 | **`main/lan_server.h / .c`** | Embedded HTTP server (port 80) and mDNS responder (`_waste._tcp`), handling `POST /api/oled/upload` and `POST /api/oled/reset`. | **Implemented** |
-| **Companion App (`companion_app/`)** | In-app GIF-to-`.wbin` converter (`WbinEncoder`), Atkinson 1-bit dithering, virtual OLED canvas preview (`OledCanvasPainter`), and `AnimationUploadSheet` modal UI. | **Implemented** |
+| **Companion App (`companion_app/`)** | In-app GIF-to-`.wbin` converter (`WbinEncoder`), Atkinson 1-bit dithering, virtual OLED canvas preview (`OledCanvasPainter`), Tri-Mode `Connection Selector` & LAN UI (`BleProvisionSheet`), multi-device backend (`WasteDeviceSession`), and `AnimationUploadSheet` modal UI. | **Implemented** |
 
 ---
 

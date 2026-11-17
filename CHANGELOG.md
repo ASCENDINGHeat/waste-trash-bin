@@ -41,13 +41,19 @@ All notable changes to **W.A.S.T.E.** (**W**aste **A**utomation and **S**ensing 
 - **`reset_anim` Command**: JSON `{"cmd":"reset_anim"}` erases the custom animation flash partition and restores the dancing cat mascot.
 
 #### 5. Cross-Platform Flutter Companion App v2.0.0 (`companion_app/`)
-- **Tri-Mode Connection Router (`WasteConnectionService`)**: Automatically resolves and prioritizes connections: **Priority 1 (Local LAN)** $\rightarrow$ **Priority 2 (Cloud MQTT)** $\rightarrow$ **Priority 3 (Direct BLE GATT `0xFF00`)**.
+- **Multi-Device Connection Backend (`WasteDeviceSession` + `WasteConnectionService`)**: Isolated per-node runtime state (`lib/models/device_session.dart`) supporting concurrent LAN HTTP polling timers, shared MQTT `smartbin/+` wildcard routing, multiple BLE GATT links, and V2 `SharedPreferences` persistence with automatic V1 migration.
+- **Tri-Mode Connection Selector & Local LAN Setup UI (`BleProvisionSheet`)**: Added `Auto / LAN / MQTT / BLE` (`TransportPreference`) segmented selector, per-transport status pills, Node IP / `.local` Hostname & Port (`80`) fields, `Use .local` quick-fill, `Find .local` probe, and startup LAN auto-reconnect.
 - **Pure-Dart GIF-to-`.wbin` Converter (`WbinEncoder`)**: Decodes user-selected `.gif` files, performs box-area downsampling to $128 \times 64$, applies Atkinson 1-bit error diffusion dithering ($\Delta / 8$), formats into SSD1306 vertical page bytes, and packs 16-byte `WGF1` containers with IEEE 802.3 CRC32 (`0xEDB88320`).
 - **Custom Animation Uploader Modal (`AnimationUploadSheet`)**: Provides local GIF picking, geometric demo generator, live virtual 128x64 OLED canvas preview (`OledCanvasPainter`), frame scrub slider, target FPS control, upload progress bar, and "Reset to Mascot" action.
 - **Dashboard UI Enhancements (`DashboardScreen`)**: Added AppBar launcher button for OLED animations and Tri-Mode status badges (`LAN` green, `Cloud` teal, `BLE` light blue).
-- **Expanded Automated Test Suite (`test/widget_test.dart`)**: 16 unit and widget tests across 7 test groups covering `.wbin` packing, IEEE 802.3 CRC32 verification vectors, Tri-Mode fallback precedence, and upload UI flows.
+- **Expanded Automated Test Suite (`test/widget_test.dart`)**: 23 unit and widget tests across 8 test groups covering `.wbin` packing, IEEE 802.3 CRC32 verification vectors, Tri-Mode fallback & pinning, multi-device isolation/migration, and upload/connectivity UI flows.
 
-#### 6. Build Manifests & Deterministic Verification Tooling
+#### 6. Onboard `BOOT` (`GPIO 0`) Task & OLED Visual Feedback (`main/net_ble_mqtt.c`, `main/oled_dancing_cat.c`)
+- **Dedicated Core 0 FreeRTOS Task (`boot_btn_task`)**: Replaces `esp_timer` polling to eliminate stack-overflow/blocking risks during NVS/Wi-Fi/NimBLE/RMT calls, adding `50 ms` polling and `100 ms` release debounce.
+- **OLED Modal Feedback (`OLED_WARN_BLE_ACTIVE` & Countdown)**: Short press starts BLE advertising and pops `[i] BLE & STATUS` with BLE ID and IP; holding $0.8\text{–}2.9\text{ s}$ displays a live `Reset WiFi: X.Xs` countdown before clearing Wi-Fi NVS at $\ge 3.0\text{ s}$.
+- **NimBLE Connect Fix**: Clears `s_ble_advertising` on `BLE_GAP_EVENT_CONNECT` so repeat `BOOT` presses always resume BLE advertising reliably.
+
+#### 7. Build Manifests & Deterministic Verification Tooling
 - **ESP-IDF v6.1 Manifests**: Registered `esp_http_server`, `mdns`, `esp_http_client`, `esp_partition`, `esp_crc` in `main/CMakeLists.txt` and `espressif/mdns` in `main/idf_component.yml`.
 - **Deterministic Node.js Verification Suite (`tools/`)**:
   - `tools/verify_gap_b.mjs`: 4-tier E2E verification suite testing WGF1 binary layout, CRC32 vectors, corner-case rejection, streaming simulation, and static code compliance.
