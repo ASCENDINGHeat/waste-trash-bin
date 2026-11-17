@@ -133,6 +133,21 @@ class _BleProvisionSheetState extends State<BleProvisionSheet> {
     );
   }
 
+  Widget _buildSectionHeader(String title, Widget trailing) {
+    return Row(
+      children: [
+        Expanded(
+          child: Text(
+            title,
+            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+          ),
+        ),
+        const SizedBox(width: 8),
+        trailing,
+      ],
+    );
+  }
+
   @override
   void dispose() {
     _scanSub?.cancel();
@@ -166,12 +181,13 @@ class _BleProvisionSheetState extends State<BleProvisionSheet> {
               padding: const EdgeInsets.all(20),
               children: [
                 Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    const Text(
-                      'Tri-Mode Connectivity & Setup',
-                      style:
-                          TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                    const Expanded(
+                      child: Text(
+                        'Tri-Mode Connectivity & Setup',
+                        style:
+                            TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                      ),
                     ),
                     IconButton(
                       icon: const Icon(Icons.close),
@@ -243,28 +259,21 @@ class _BleProvisionSheetState extends State<BleProvisionSheet> {
                 const Divider(height: 28),
 
                 // 1. Local LAN HTTP REST (:80 / mDNS .local)
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Text(
-                      '1. Local LAN HTTP (:80 / mDNS)',
-                      style:
-                          TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-                    ),
-                    TextButton.icon(
-                      key: const Key('use_mdns_local_button'),
-                      icon: const Icon(Icons.dns_outlined, size: 16),
-                      label: const Text('Use .local'),
-                      onPressed: () {
-                        setState(() {
-                          _lanHostCtrl.text = '${svc.activeDeviceId}.local';
-                          if (_lanPortCtrl.text.trim().isEmpty) {
-                            _lanPortCtrl.text = '80';
-                          }
-                        });
-                      },
-                    ),
-                  ],
+                _buildSectionHeader(
+                  '1. Local LAN HTTP (:80 / mDNS)',
+                  TextButton.icon(
+                    key: const Key('use_mdns_local_button'),
+                    icon: const Icon(Icons.dns_outlined, size: 16),
+                    label: const Text('Use .local'),
+                    onPressed: () {
+                      setState(() {
+                        _lanHostCtrl.text = '${svc.activeDeviceId}.local';
+                        if (_lanPortCtrl.text.trim().isEmpty) {
+                          _lanPortCtrl.text = '80';
+                        }
+                      });
+                    },
+                  ),
                 ),
                 const SizedBox(height: 8),
                 Row(
@@ -363,24 +372,17 @@ class _BleProvisionSheetState extends State<BleProvisionSheet> {
                 const Divider(height: 32),
 
                 // 2. Phone MQTT Broker Connection
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Text(
-                      '2. MQTT Broker (Flespi / LAN / Cloud)',
-                      style:
-                          TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-                    ),
-                    TextButton.icon(
-                      icon: const Icon(Icons.bolt, size: 16),
-                      label: const Text('Flespi Preset'),
-                      onPressed: () {
-                        setState(() {
-                          _mqttCtrl.text = 'mqtt://mqtt.flespi.io:1883';
-                        });
-                      },
-                    ),
-                  ],
+                _buildSectionHeader(
+                  '2. MQTT Broker (Flespi / LAN / Cloud)',
+                  TextButton.icon(
+                    icon: const Icon(Icons.bolt, size: 16),
+                    label: const Text('Flespi Preset'),
+                    onPressed: () {
+                      setState(() {
+                        _mqttCtrl.text = 'mqtt://mqtt.flespi.io:1883';
+                      });
+                    },
+                  ),
                 ),
                 const SizedBox(height: 8),
                 TextField(
@@ -446,26 +448,19 @@ class _BleProvisionSheetState extends State<BleProvisionSheet> {
                 const Divider(height: 32),
 
                 // 3. BLE Scanner & Failover Connection
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Text(
-                      '3. Direct BLE GATT (0xFF00)',
-                      style:
-                          TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-                    ),
-                    FilledButton.tonalIcon(
-                      icon: _scanning
-                          ? const SizedBox(
-                              width: 16,
-                              height: 16,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Icon(Icons.bluetooth_searching),
-                      label: Text(_scanning ? 'Scanning...' : 'Scan BLE'),
-                      onPressed: _scanning ? null : _startBleScan,
-                    ),
-                  ],
+                _buildSectionHeader(
+                  '3. Direct BLE GATT (0xFF00)',
+                  FilledButton.tonalIcon(
+                    icon: _scanning
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.bluetooth_searching),
+                    label: Text(_scanning ? 'Scanning...' : 'Scan BLE'),
+                    onPressed: _scanning ? null : _startBleScan,
+                  ),
                 ),
                 const SizedBox(height: 8),
                 if (_scanResults.isEmpty)
