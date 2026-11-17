@@ -522,6 +522,7 @@ static void render_warning_modal_overlay(uint8_t *fb, oled_warn_code_t code,
         case OLED_WARN_SENSOR_ECHO_ERR:   title = "[!] SENSOR ERROR"; break;
         case OLED_WARN_WIFI_FAILOVER:     title = "[!] WIFI OFFLINE"; break;
         case OLED_WARN_WIFI_RESET:        title = "[i] WIFI CLEARED"; break;
+        case OLED_WARN_BLE_ACTIVE:        title = "[i] BLE & STATUS"; break;
         default: break;
     }
 

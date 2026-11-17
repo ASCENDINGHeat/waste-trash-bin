@@ -65,7 +65,6 @@ static char s_topic_cmd[64];
 static net_cmd_callbacks_t s_cmd_cbs = {0};
 static esp_mqtt_client_handle_t s_mqtt_client = NULL;
 static esp_timer_handle_t s_wifi_retry_timer = NULL;
-static esp_timer_handle_t s_boot_btn_timer = NULL;
 
 static bool s_wifi_connected = false;
 static bool s_mqtt_connected = false;
@@ -73,7 +72,6 @@ static bool s_ble_advertising = false;
 static bool s_nimble_started = false;
 static bool s_failover_warned = false;
 static int s_wifi_retry_count = 0;
-static int s_boot_btn_hold_ticks = 0;
 static uint16_t s_ble_conn_handle = BLE_HS_CONN_HANDLE_NONE;
 static uint16_t s_telem_val_handle = 0;
 static uint8_t s_ble_addr_type = BLE_OWN_ADDR_PUBLIC;
@@ -664,9 +662,11 @@ static int ble_gap_event_cb(struct ble_gap_event *event, void *arg)
         case BLE_GAP_EVENT_CONNECT:
             if (event->connect.status == 0) {
                 s_ble_conn_handle = event->connect.conn_handle;
+                s_ble_advertising = false; /* NimBLE stops advertising when central connects */
                 ESP_LOGI(TAG, "BLE client connected (handle=%u)", s_ble_conn_handle);
             } else {
                 s_ble_conn_handle = BLE_HS_CONN_HANDLE_NONE;
+                s_ble_advertising = false;
                 if (!s_wifi_connected) {
                     ble_start_advertising();
                 }
@@ -709,7 +709,11 @@ static int ble_gap_event_cb(struct ble_gap_event *event, void *arg)
 
 static void ble_start_advertising(void)
 {
-    if (!s_nimble_started || s_ble_advertising) {
+    if (!s_nimble_started) {
+        ESP_LOGW(TAG, "Cannot start BLE advertising: NimBLE stack not synced yet");
+        return;
+    }
+    if (s_ble_advertising) {
         return;
     }
 
@@ -723,18 +727,25 @@ static void ble_start_advertising(void)
     fields.num_uuids16 = 1;
     fields.uuids16_is_complete = 1;
 
-    ble_gap_adv_set_fields(&fields);
+    int rc = ble_gap_adv_set_fields(&fields);
+    if (rc != 0) {
+        ESP_LOGW(TAG, "ble_gap_adv_set_fields returned rc=%d", rc);
+    }
 
     struct ble_gap_adv_params adv_params = {0};
     adv_params.conn_mode = BLE_GAP_CONN_MODE_UND;
     adv_params.disc_mode = BLE_GAP_DISC_MODE_GEN;
 
-    if (ble_gap_adv_start(s_ble_addr_type, NULL, BLE_HS_FOREVER,
-                          &adv_params, ble_gap_event_cb, NULL) == 0) {
+    rc = ble_gap_adv_start(s_ble_addr_type, NULL, BLE_HS_FOREVER,
+                           &adv_params, ble_gap_event_cb, NULL);
+    if (rc == 0 || rc == BLE_HS_EALREADY) {
         s_ble_advertising = true;
         rgb_status_set_ble_active(true);
         hud_sync_net();
         ESP_LOGI(TAG, "BLE advertising active as '%s' (setup / Wi-Fi failover mode)", name);
+    } else {
+        s_ble_advertising = false;
+        ESP_LOGE(TAG, "ble_gap_adv_start failed (rc=%d)", rc);
     }
 }
 
@@ -799,29 +810,116 @@ static void wifi_bg_retry_timer_cb(void *arg)
     }
 }
 
-static void boot_btn_timer_cb(void *arg)
+static void boot_btn_show_info_modal(void)
 {
-    (void)arg;
-    if (gpio_get_level(BOOT_BUTTON_GPIO) == 0) {
-        s_boot_btn_hold_ticks++;
-        if (s_boot_btn_hold_ticks == 30) { /* Held for 3.0 seconds (30 x 100ms) */
-            smartbin_config_t *cfg = app_config_get();
-            memset(cfg->wifi_ssid, 0, sizeof(cfg->wifi_ssid));
-            memset(cfg->wifi_pass, 0, sizeof(cfg->wifi_pass));
-            app_config_save(cfg);
-            esp_wifi_disconnect();
-            ble_start_advertising();
-            oled_hud_show_warning(OLED_WARN_WIFI_RESET, "NVS WiFi cleared", "BLE Setup Active", 4000);
-            ESP_LOGW(TAG, "BOOT button held 3s: cleared Wi-Fi NVS credentials & restarted BLE provisioning!");
+    const char *short_id = (strncmp(s_device_id, "smartbin_", 9) == 0)
+                               ? (s_device_id + 9)
+                               : s_device_id;
+    char line1[48];
+    char line2[48];
+    snprintf(line1, sizeof(line1), "BLE:%.13s", short_id);
+
+    if (s_wifi_connected) {
+        esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+        esp_netif_ip_info_t ip_info;
+        if (netif != NULL && esp_netif_get_ip_info(netif, &ip_info) == ESP_OK) {
+            snprintf(line2, sizeof(line2), "IP:" IPSTR, IP2STR(&ip_info.ip));
+        } else {
+            snprintf(line2, sizeof(line2), "WiFi+BLE Active");
         }
     } else {
-        if (s_boot_btn_hold_ticks >= 1 && s_boot_btn_hold_ticks < 30) {
-            /* Short press: immediately re-enable BLE advertising without wiping Wi-Fi */
-            oled_dancing_cat_notify_activity();
-            ble_start_advertising();
-            ESP_LOGI(TAG, "BOOT button pressed: BLE provisioning advertising enabled");
+        snprintf(line2, sizeof(line2), "Ready to Pair!");
+    }
+
+    oled_hud_show_warning(OLED_WARN_BLE_ACTIVE, line1, line2, 3500);
+}
+
+static void boot_btn_task(void *arg)
+{
+    (void)arg;
+    const TickType_t poll_delay = pdMS_TO_TICKS(50);
+
+    gpio_reset_pin(BOOT_BUTTON_GPIO);
+    gpio_config_t boot_btn_cfg = {
+        .pin_bit_mask = (1ULL << BOOT_BUTTON_GPIO),
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en = GPIO_PULLUP_ENABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    gpio_config(&boot_btn_cfg);
+
+    /* Wait until BOOT is released in case it was held during flashing/reset */
+    while (gpio_get_level(BOOT_BUTTON_GPIO) == 0) {
+        vTaskDelay(poll_delay);
+    }
+
+    uint32_t hold_ms = 0;
+    uint8_t release_debounce = 0;
+    bool reset_triggered = false;
+    uint32_t last_warn_step = 0;
+
+    while (1) {
+        if (gpio_get_level(BOOT_BUTTON_GPIO) == 0) {
+            release_debounce = 0;
+            hold_ms += 50U;
+
+            if (hold_ms == 50U) {
+                oled_dancing_cat_notify_activity();
+            }
+
+            if (!reset_triggered && hold_ms >= 800U && hold_ms < 3000U) {
+                uint32_t step = hold_ms / 500U;
+                if (step != last_warn_step) {
+                    last_warn_step = step;
+                    uint32_t rem_ds = (3000U - hold_ms + 99U) / 100U;
+                    char l2[48];
+                    snprintf(l2, sizeof(l2), "Reset WiFi: %u.%us",
+                             (unsigned)(rem_ds / 10U), (unsigned)(rem_ds % 10U));
+                    oled_hud_show_warning(OLED_WARN_BLE_ACTIVE, "Keep holding BOOT", l2, 700);
+                }
+            } else if (!reset_triggered && hold_ms >= 3000U) {
+                reset_triggered = true;
+                ESP_LOGW(TAG, "BOOT button held 3s: clearing Wi-Fi NVS & enabling BLE setup!");
+
+                smartbin_config_t *cfg = app_config_get();
+                memset(cfg->wifi_ssid, 0, sizeof(cfg->wifi_ssid));
+                memset(cfg->wifi_pass, 0, sizeof(cfg->wifi_pass));
+                app_config_save(cfg);
+
+                wifi_config_t empty_wifi_cfg = {0};
+                esp_wifi_set_config(WIFI_IF_STA, &empty_wifi_cfg);
+
+                s_wifi_connected = false;
+                s_mqtt_connected = false;
+                s_wifi_retry_count = 0;
+                if (s_wifi_retry_timer != NULL) {
+                    esp_timer_stop(s_wifi_retry_timer);
+                }
+                esp_wifi_disconnect();
+                lan_server_stop();
+
+                ble_start_advertising();
+                hud_sync_net();
+                oled_hud_show_warning(OLED_WARN_WIFI_RESET, "NVS WiFi cleared", "BLE Setup Active", 4000);
+            }
+        } else if (hold_ms > 0U) {
+            release_debounce++;
+            if (release_debounce >= 2U) {
+                if (!reset_triggered && hold_ms >= 50U) {
+                    oled_dancing_cat_notify_activity();
+                    ble_start_advertising();
+                    hud_sync_net();
+                    boot_btn_show_info_modal();
+                    ESP_LOGI(TAG, "BOOT button short press: BLE provisioning & status modal active");
+                }
+                hold_ms = 0U;
+                release_debounce = 0U;
+                reset_triggered = false;
+                last_warn_step = 0U;
+            }
         }
-        s_boot_btn_hold_ticks = 0;
+        vTaskDelay(poll_delay);
     }
 }
 
@@ -910,23 +1008,16 @@ esp_err_t net_ble_mqtt_init(const net_cmd_callbacks_t *cbs)
     };
     esp_timer_create(&retry_timer_args, &s_wifi_retry_timer);
 
-    /* Configure onboard BOOT button (GPIO 0) to re-trigger BLE provisioning anytime */
-    gpio_config_t boot_btn_cfg = {
-        .pin_bit_mask = (1ULL << BOOT_BUTTON_GPIO),
-        .mode = GPIO_MODE_INPUT,
-        .pull_up_en = GPIO_PULLUP_ENABLE,
-        .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type = GPIO_INTR_DISABLE,
-    };
-    gpio_config(&boot_btn_cfg);
-
-    const esp_timer_create_args_t boot_btn_timer_args = {
-        .callback = &boot_btn_timer_cb,
-        .name = "boot_btn_poll",
-    };
-    if (esp_timer_create(&boot_btn_timer_args, &s_boot_btn_timer) == ESP_OK) {
-        esp_timer_start_periodic(s_boot_btn_timer, 100 * 1000); /* 100 ms */
-    }
+    /* Start dedicated Core 0 FreeRTOS task for onboard BOOT button (GPIO 0) */
+    xTaskCreatePinnedToCore(
+        boot_btn_task,
+        "boot_btn_task",
+        4096,
+        NULL,
+        4,
+        NULL,
+        0
+    );
 
     /* Initialize TCP/IP stack and Wi-Fi STA */
     ESP_ERROR_CHECK(esp_netif_init());

@@ -28,7 +28,8 @@ typedef enum {
     OLED_WARN_PIR_STUCK_TIMEOUT,   /* 30s PIR stuck-sensor safety close      */
     OLED_WARN_SENSOR_ECHO_ERR,     /* HC-SR04 ultrasonic echo timeout        */
     OLED_WARN_WIFI_FAILOVER,       /* Wi-Fi disconnected -> BLE failover     */
-    OLED_WARN_WIFI_RESET           /* NVS Wi-Fi credentials cleared          */
+    OLED_WARN_WIFI_RESET,          /* NVS Wi-Fi credentials cleared          */
+    OLED_WARN_BLE_ACTIVE           /* BOOT button BLE/IP info modal          */
 } oled_warn_code_t;
 
 /**
