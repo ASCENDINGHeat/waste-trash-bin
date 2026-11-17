@@ -384,6 +384,107 @@ void main() {
     });
   });
 
+  group('Multi-Device Connection Backend Tests', () {
+    test('Maintains isolated transport, LAN host, and telemetry per device',
+        () async {
+      SharedPreferences.setMockInitialValues({});
+      final service = WasteConnectionService();
+
+      await service.registerDevice(
+        deviceId: 'smartbin_s3_kitchen',
+        alias: 'Kitchen',
+        lanHost: '192.168.1.50',
+        makeActive: true,
+      );
+      await service.registerDevice(
+        deviceId: 'smartbin_s3_garage',
+        alias: 'Garage',
+        lanHost: '192.168.1.51',
+      );
+
+      expect(service.devices.length, 2);
+      expect(service.activeDeviceId, 'smartbin_s3_kitchen');
+      expect(service.activeDevice.displayName, 'Kitchen');
+
+      service.setMockTransports(
+        deviceId: 'smartbin_s3_kitchen',
+        lan: true,
+        mqtt: true,
+        latestTelemetry: WasteTelemetry(
+          deviceId: 'smartbin_s3_kitchen',
+          trigger: 'periodic',
+          fillPercent: 40,
+          distanceCm: 22.0,
+          fullAlert: false,
+          lidState: 'closed',
+          openCycles: 5,
+          wifiRssi: -55,
+          uptimeS: 100,
+          timestamp: DateTime.now(),
+        ),
+      );
+      service.setMockTransports(
+        deviceId: 'smartbin_s3_garage',
+        lan: false,
+        ble: true,
+        preferredTransport: TransportPreference.ble,
+        latestTelemetry: WasteTelemetry(
+          deviceId: 'smartbin_s3_garage',
+          trigger: 'lid_close',
+          fillPercent: 95,
+          distanceCm: 9.8,
+          fullAlert: true,
+          lidState: 'closed',
+          openCycles: 18,
+          wifiRssi: -127,
+          uptimeS: 200,
+          timestamp: DateTime.now(),
+        ),
+      );
+
+      // Active device is still Kitchen
+      expect(service.transportMode, TransportMode.lan);
+      expect(service.lanHost, '192.168.1.50');
+      expect(service.latestTelemetry?.fillPercent, 40);
+
+      // Switch to Garage and confirm isolated state & facade delegation
+      await service.selectActiveDevice('smartbin_s3_garage');
+      expect(service.activeDeviceId, 'smartbin_s3_garage');
+      expect(service.transportMode, TransportMode.ble);
+      expect(service.preferredTransport, TransportPreference.ble);
+      expect(service.lanHost, '192.168.1.51');
+      expect(service.latestTelemetry?.fillPercent, 95);
+      expect(service.history.length, 1);
+
+      // Remove Garage and verify fallback to remaining device
+      await service.removeDevice('smartbin_s3_garage');
+      expect(service.devices.length, 1);
+      expect(service.activeDeviceId, 'smartbin_s3_kitchen');
+      expect(service.latestTelemetry?.fillPercent, 40);
+    });
+
+    test('Migrates legacy V1 single-device prefs and persists V2 registry',
+        () async {
+      SharedPreferences.setMockInitialValues({
+        'waste_device_id': 'smartbin_s3_legacy',
+        'waste_lan_host': '192.168.1.77',
+        'waste_lan_port': 8080,
+        'waste_transport_preference': 'mqtt',
+      });
+
+      final service = WasteConnectionService();
+      await service.init();
+
+      expect(service.devices.length, 1);
+      expect(service.activeDeviceId, 'smartbin_s3_legacy');
+      expect(service.lanHost, '192.168.1.77');
+      expect(service.lanPort, 8080);
+      expect(service.preferredTransport, TransportPreference.mqtt);
+      // Avoid actual socket timers hanging if any
+      service.disconnectLan(deviceId: 'smartbin_s3_legacy');
+    });
+  });
+
   group('AnimationUploadSheet & Dashboard UI Integration Tests', () {
     testWidgets('Renders OLED Animation launcher button and opens AnimationUploadSheet',
         (WidgetTester tester) async {

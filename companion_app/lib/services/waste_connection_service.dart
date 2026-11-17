@@ -7,341 +7,604 @@ import 'package:http/http.dart' as http;
 import 'package:mqtt_client/mqtt_client.dart';
 import 'package:mqtt_client/mqtt_server_client.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../models/device_session.dart';
 import '../models/telemetry.dart';
 
-/// Active network connection transport mode.
-///
-/// Priority 1: LAN (Local HTTP / mDNS)
-/// Priority 2: MQTT (Cloud broker / Flespi)
-/// Priority 3: BLE (Direct GATT 0xFF00)
-enum TransportMode { disconnected, lan, mqtt, ble }
-
-/// User-selectable transport routing preference.
-enum TransportPreference { auto, lan, mqtt, ble }
+export '../models/device_session.dart';
 
 class WasteConnectionService extends ChangeNotifier {
-  static const int maxHistoryEntries = 500;
-  static const String _prefsHistoryKey = 'waste_telemetry_history_v1';
+  static const int maxHistoryEntries = WasteDeviceSession.maxHistoryEntries;
+  static const String defaultPlaceholderDeviceId = 'smartbin_s3';
+
+  // V1 legacy preference keys (read once for migration if v2 absent)
+  static const String _legacyHistoryKey = 'waste_telemetry_history_v1';
+  static const String _legacyDeviceIdKey = 'waste_device_id';
+  static const String _legacyLanHostKey = 'waste_lan_host';
+  static const String _legacyLanPortKey = 'waste_lan_port';
+  static const String _legacyTransportPrefKey = 'waste_transport_preference';
+
+  // V2 multi-device preference keys
   static const String _prefsBrokerKey = 'waste_mqtt_broker_uri';
-  static const String _prefsDeviceIdKey = 'waste_device_id';
-  static const String _prefsLanHostKey = 'waste_lan_host';
-  static const String _prefsLanPortKey = 'waste_lan_port';
-  static const String _prefsTransportPrefKey = 'waste_transport_preference';
+  static const String _prefsMqttFilterKey = 'waste_mqtt_device_filter';
+  static const String _prefsDevicesKey = 'waste_devices_v2';
+  static const String _prefsActiveDeviceKey = 'waste_active_device_v2';
+
+  static String _historyKeyFor(String deviceId) =>
+      'waste_telemetry_history_v2_$deviceId';
+
+  final Map<String, WasteDeviceSession> _devices = {
+    defaultPlaceholderDeviceId:
+        WasteDeviceSession(deviceId: defaultPlaceholderDeviceId),
+  };
+  String _activeDeviceId = defaultPlaceholderDeviceId;
 
   String _mqttBrokerUri = 'mqtt://broker.emqx.io:1883';
-  String _targetDeviceId = '';
-  String _lanHost = '';
-  int _lanPort = 80;
-  String _lanDeviceIp = '';
-  TransportPreference _preferredTransport = TransportPreference.auto;
-
-  bool _lanConnected = false;
-  bool _lanConnecting = false;
+  String _mqttDeviceFilter = '';
   bool _mqttConnected = false;
-  bool _bleConnected = false;
-  bool _nodeOnlineLwt = false;
+  MqttServerClient? _mqttClient;
+  StreamSubscription<List<MqttReceivedMessage<MqttMessage?>>>? _mqttUpdatesSub;
+
   String _statusMessage = 'Idle — Connect via LAN, MQTT or BLE';
 
-  WasteTelemetry? _latestTelemetry;
-  final List<WasteTelemetry> _history = [];
+  WasteConnectionService();
 
-  Timer? _lanPollTimer;
-  MqttServerClient? _mqttClient;
-  BluetoothDevice? _bleDevice;
-  BluetoothCharacteristic? _chrSsid;
-  BluetoothCharacteristic? _chrPass;
-  BluetoothCharacteristic? _chrMqtt;
-  BluetoothCharacteristic? _chrApply;
-  BluetoothCharacteristic? _chrTelem;
-  BluetoothCharacteristic? _chrCmd;
-  BluetoothCharacteristic? _chrUpload;
-  StreamSubscription<List<int>>? _bleTelemSub;
-  StreamSubscription<BluetoothConnectionState>? _bleConnSub;
+  // -------------------- Device Registry Helpers --------------------
+
+  WasteDeviceSession _ensureDevice(String deviceId) {
+    final normalized =
+        deviceId.trim().isNotEmpty ? deviceId.trim() : defaultPlaceholderDeviceId;
+    return _devices.putIfAbsent(
+      normalized,
+      () => WasteDeviceSession(deviceId: normalized),
+    );
+  }
+
+  WasteDeviceSession _targetSession(String? deviceId) =>
+      _ensureDevice(deviceId ?? _activeDeviceId);
+
+  bool _isUntouchedPlaceholder(WasteDeviceSession? session) =>
+      session != null &&
+      session.deviceId == defaultPlaceholderDeviceId &&
+      !session.lanConnected &&
+      !session.bleConnected &&
+      session.lanHost.isEmpty &&
+      session.latestTelemetry == null &&
+      session.history.isEmpty;
+
+  WasteDeviceSession _bindOrMigrateSession(
+    WasteDeviceSession current,
+    String reportedId, {
+    bool selectIfActiveChanged = false,
+  }) {
+    final id = reportedId.trim();
+    if (id.isEmpty || id == current.deviceId) {
+      return current;
+    }
+
+    if (current.deviceId == defaultPlaceholderDeviceId) {
+      final existing = _devices[id];
+      if (existing == null) {
+        _devices.remove(defaultPlaceholderDeviceId);
+        current.deviceId = id;
+        _devices[id] = current;
+        if (_activeDeviceId == defaultPlaceholderDeviceId) {
+          _activeDeviceId = id;
+        }
+        return current;
+      } else {
+        if (current.lanHost.isNotEmpty) {
+          existing.lanHost = current.lanHost;
+          existing.lanPort = current.lanPort;
+        }
+        if (current.lanConnected) {
+          existing.lanConnected = true;
+          existing.lanDeviceIp = current.lanDeviceIp;
+        }
+        current.cancelLanTimer();
+        current.lanConnected = false;
+        _devices.remove(defaultPlaceholderDeviceId);
+        if (_activeDeviceId == defaultPlaceholderDeviceId) {
+          _activeDeviceId = id;
+        }
+        return existing;
+      }
+    }
+
+    final target = _ensureDevice(id);
+    if (selectIfActiveChanged && current.deviceId == _activeDeviceId) {
+      _activeDeviceId = id;
+    }
+    return target;
+  }
+
+  // -------------------- Public Getters (Active-Device Facade + Multi-Device) --------------------
+
+  List<WasteDeviceSession> get devices => List.unmodifiable(_devices.values);
+
+  WasteDeviceSession get activeDevice => _ensureDevice(_activeDeviceId);
+
+  WasteDeviceSession? getDevice(String deviceId) => _devices[deviceId.trim()];
+
+  String get activeDeviceId {
+    final active = activeDevice;
+    return active.latestTelemetry?.deviceId.isNotEmpty == true
+        ? active.latestTelemetry!.deviceId
+        : active.deviceId;
+  }
 
   String get mqttBrokerUri => _mqttBrokerUri;
-  String get lanHost => _lanHost;
-  int get lanPort => _lanPort;
-  String get lanDeviceIp => _lanDeviceIp;
-  TransportPreference get preferredTransport => _preferredTransport;
-  String get activeDeviceId => _latestTelemetry?.deviceId.isNotEmpty == true
-      ? _latestTelemetry!.deviceId
-      : (_targetDeviceId.isNotEmpty ? _targetDeviceId : 'smartbin_s3');
+  String get mqttDeviceFilter => _mqttDeviceFilter;
+  String get lanHost => activeDevice.lanHost;
+  int get lanPort => activeDevice.lanPort;
+  String get lanDeviceIp => activeDevice.lanDeviceIp;
+  TransportPreference get preferredTransport => activeDevice.preferredTransport;
 
-  bool get isLanConnected => _lanConnected;
-  bool get isLanConnecting => _lanConnecting;
+  bool get isLanConnected => activeDevice.lanConnected;
+  bool get isLanConnecting => activeDevice.lanConnecting;
   bool get isMqttConnected => _mqttConnected;
-  bool get isBleConnected => _bleConnected;
-  bool get isNodeOnline {
-    switch (_preferredTransport) {
-      case TransportPreference.lan:
-        return _lanConnected;
-      case TransportPreference.mqtt:
-        return _nodeOnlineLwt;
-      case TransportPreference.ble:
-        return _bleConnected;
-      case TransportPreference.auto:
-        return _lanConnected || _nodeOnlineLwt || _bleConnected;
-    }
-  }
+  bool get isBleConnected => activeDevice.bleConnected;
+  bool get isNodeOnline => activeDevice.isOnline();
   String get statusMessage => _statusMessage;
-  WasteTelemetry? get latestTelemetry => _latestTelemetry;
-  List<WasteTelemetry> get history => List.unmodifiable(_history);
+  WasteTelemetry? get latestTelemetry => activeDevice.latestTelemetry;
+  List<WasteTelemetry> get history =>
+      List.unmodifiable(activeDevice.history);
 
-  /// Tri-Mode Transport Priority Resolver:
+  /// Tri-Mode Transport Priority Resolver for the active device:
   /// Auto: Priority 1 (Local LAN) -> Priority 2 (Cloud MQTT) -> Priority 3 (Direct BLE)
   /// Manual: Uses only the selected transport without silent fallback.
-  TransportMode get transportMode {
-    switch (_preferredTransport) {
-      case TransportPreference.lan:
-        return _lanConnected ? TransportMode.lan : TransportMode.disconnected;
-      case TransportPreference.mqtt:
-        return _mqttConnected ? TransportMode.mqtt : TransportMode.disconnected;
-      case TransportPreference.ble:
-        return _bleConnected ? TransportMode.ble : TransportMode.disconnected;
-      case TransportPreference.auto:
-        if (_lanConnected) return TransportMode.lan;
-        if (_mqttConnected) return TransportMode.mqtt;
-        if (_bleConnected) return TransportMode.ble;
-        return TransportMode.disconnected;
-    }
+  TransportMode get transportMode =>
+      activeDevice.resolveTransportMode(mqttBrokerConnected: _mqttConnected);
+
+  // -------------------- Multi-Device Lifecycle & Persistence --------------------
+
+  Future<void> _persistRegistry() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final list =
+          _devices.values.map((d) => jsonEncode(d.toMetadataJson())).toList();
+      await prefs.setStringList(_prefsDevicesKey, list);
+      await prefs.setString(_prefsActiveDeviceKey, _activeDeviceId);
+    } catch (_) {}
   }
 
-  Future<void> setTransportPreference(TransportPreference pref) async {
-    _preferredTransport = pref;
+  Future<void> _persistDeviceHistory(WasteDeviceSession session) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final encoded =
+          session.history.map((e) => jsonEncode(e.toJson())).toList();
+      await prefs.setStringList(_historyKeyFor(session.deviceId), encoded);
+    } catch (_) {}
+  }
+
+  Future<void> selectActiveDevice(String deviceId) async {
+    final session = _ensureDevice(deviceId);
+    _activeDeviceId = session.deviceId;
+    _statusMessage = 'Active node: ${session.displayName}';
+    notifyListeners();
+    await _persistRegistry();
+  }
+
+  Future<WasteDeviceSession> registerDevice({
+    required String deviceId,
+    String? alias,
+    String? lanHost,
+    int? lanPort,
+    bool makeActive = false,
+  }) async {
+    final normalizedId = deviceId.trim();
+    if (_devices.length == 1 &&
+        _isUntouchedPlaceholder(_devices[defaultPlaceholderDeviceId]) &&
+        normalizedId != defaultPlaceholderDeviceId &&
+        normalizedId.isNotEmpty) {
+      _devices.remove(defaultPlaceholderDeviceId);
+      if (_activeDeviceId == defaultPlaceholderDeviceId) {
+        _activeDeviceId = normalizedId;
+      }
+    }
+
+    final session = _ensureDevice(normalizedId);
+    if (alias != null) session.alias = alias.trim();
+    if (lanHost != null && lanHost.trim().isNotEmpty) {
+      session.lanHost = _sanitizeHost(lanHost).host;
+    }
+    if (lanPort != null && lanPort > 0 && lanPort <= 65535) {
+      session.lanPort = lanPort;
+    }
+    if (makeActive) {
+      _activeDeviceId = session.deviceId;
+    }
+    notifyListeners();
+    await _persistRegistry();
+    return session;
+  }
+
+  Future<void> setDeviceAlias(String deviceId, String alias) async {
+    final session = _ensureDevice(deviceId);
+    session.alias = alias.trim();
+    notifyListeners();
+    await _persistRegistry();
+  }
+
+  Future<void> removeDevice(String deviceId) async {
+    final id = deviceId.trim();
+    final session = _devices[id];
+    if (session == null) return;
+
+    session.cancelLanTimer();
+    session.lanConnected = false;
+    await session.closeBleResources();
+    _devices.remove(id);
+
+    if (_devices.isEmpty) {
+      _devices[defaultPlaceholderDeviceId] =
+          WasteDeviceSession(deviceId: defaultPlaceholderDeviceId);
+      _activeDeviceId = defaultPlaceholderDeviceId;
+    } else if (_activeDeviceId == id) {
+      _activeDeviceId = _devices.keys.first;
+    }
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_historyKeyFor(id));
+    } catch (_) {}
+
+    notifyListeners();
+    await _persistRegistry();
+  }
+
+  Future<void> setTransportPreference(
+    TransportPreference pref, {
+    String? deviceId,
+  }) async {
+    final session = _targetSession(deviceId);
+    session.preferredTransport = pref;
     switch (pref) {
       case TransportPreference.auto:
-        _statusMessage = 'Transport: Auto (LAN -> MQTT -> BLE)';
+        _statusMessage =
+            '${session.displayName}: Transport Auto (LAN -> MQTT -> BLE)';
         break;
       case TransportPreference.lan:
-        _statusMessage = _lanConnected
-            ? 'Transport pinned to Local LAN (http://$_lanHost:$_lanPort)'
-            : 'Transport pinned to Local LAN (Disconnected)';
+        _statusMessage = session.lanConnected
+            ? '${session.displayName}: Pinned to LAN (http://${session.lanHost}:${session.lanPort})'
+            : '${session.displayName}: Pinned to LAN (Disconnected)';
         break;
       case TransportPreference.mqtt:
         _statusMessage = _mqttConnected
-            ? 'Transport pinned to Cloud MQTT'
-            : 'Transport pinned to Cloud MQTT (Disconnected)';
+            ? '${session.displayName}: Pinned to Cloud MQTT'
+            : '${session.displayName}: Pinned to Cloud MQTT (Disconnected)';
         break;
       case TransportPreference.ble:
-        _statusMessage = _bleConnected
-            ? 'Transport pinned to Direct BLE'
-            : 'Transport pinned to Direct BLE (Disconnected)';
+        _statusMessage = session.bleConnected
+            ? '${session.displayName}: Pinned to Direct BLE'
+            : '${session.displayName}: Pinned to Direct BLE (Disconnected)';
         break;
     }
     notifyListeners();
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString(_prefsTransportPrefKey, pref.name);
-    } catch (_) {}
+    await _persistRegistry();
   }
 
   Future<void> init() async {
     final prefs = await SharedPreferences.getInstance();
     _mqttBrokerUri = prefs.getString(_prefsBrokerKey) ?? _mqttBrokerUri;
-    _targetDeviceId = prefs.getString(_prefsDeviceIdKey) ?? '';
-    _lanHost = prefs.getString(_prefsLanHostKey) ?? '';
-    _lanPort = prefs.getInt(_prefsLanPortKey) ?? 80;
+    _mqttDeviceFilter = prefs.getString(_prefsMqttFilterKey) ??
+        prefs.getString(_legacyDeviceIdKey) ??
+        '';
 
-    final prefName = prefs.getString(_prefsTransportPrefKey);
-    if (prefName != null) {
-      for (final v in TransportPreference.values) {
-        if (v.name == prefName) {
-          _preferredTransport = v;
-          break;
+    final savedDevices = prefs.getStringList(_prefsDevicesKey);
+    if (savedDevices != null && savedDevices.isNotEmpty) {
+      _devices.clear();
+      for (final raw in savedDevices) {
+        try {
+          final decoded = jsonDecode(raw);
+          if (decoded is Map<String, dynamic>) {
+            final session = WasteDeviceSession.fromMetadataJson(decoded);
+            _devices[session.deviceId] = session;
+          }
+        } catch (_) {}
+      }
+      if (_devices.isEmpty) {
+        _devices[defaultPlaceholderDeviceId] =
+            WasteDeviceSession(deviceId: defaultPlaceholderDeviceId);
+      }
+      final savedActive = prefs.getString(_prefsActiveDeviceKey);
+      _activeDeviceId = (savedActive != null && _devices.containsKey(savedActive))
+          ? savedActive
+          : _devices.keys.first;
+
+      for (final session in _devices.values) {
+        final histRaw = prefs.getStringList(_historyKeyFor(session.deviceId)) ?? [];
+        session.history.clear();
+        for (final item in histRaw) {
+          final parsed = WasteTelemetry.tryParse(item);
+          if (parsed != null) {
+            session.history.add(parsed);
+          }
+        }
+        if (session.history.isNotEmpty) {
+          session.latestTelemetry = session.history.last;
         }
       }
-    }
+    } else {
+      // One-time migration from V1 single-device preferences
+      final legacyId = prefs.getString(_legacyDeviceIdKey)?.trim() ?? '';
+      final initialId =
+          legacyId.isNotEmpty ? legacyId : defaultPlaceholderDeviceId;
+      final session = WasteDeviceSession(
+        deviceId: initialId,
+        lanHost: prefs.getString(_legacyLanHostKey) ?? '',
+        lanPort: prefs.getInt(_legacyLanPortKey) ?? 80,
+      );
 
-    final rawList = prefs.getStringList(_prefsHistoryKey) ?? [];
-    _history.clear();
-    for (final item in rawList) {
-      final parsed = WasteTelemetry.tryParse(item);
-      if (parsed != null) {
-        _history.add(parsed);
+      final prefName = prefs.getString(_legacyTransportPrefKey);
+      if (prefName != null) {
+        for (final v in TransportPreference.values) {
+          if (v.name == prefName) {
+            session.preferredTransport = v;
+            break;
+          }
+        }
+      }
+
+      final rawList = prefs.getStringList(_legacyHistoryKey) ?? [];
+      for (final item in rawList) {
+        final parsed = WasteTelemetry.tryParse(item);
+        if (parsed != null) {
+          session.addTelemetry(parsed);
+        }
+      }
+
+      _devices
+        ..clear()
+        ..[initialId] = session;
+      _activeDeviceId = initialId;
+      await _persistRegistry();
+      if (session.history.isNotEmpty) {
+        await _persistDeviceHistory(session);
       }
     }
-    if (_history.isNotEmpty) {
-      _latestTelemetry = _history.last;
-    }
+
     notifyListeners();
 
-    if (_lanHost.isNotEmpty &&
-        (_preferredTransport == TransportPreference.auto ||
-            _preferredTransport == TransportPreference.lan)) {
-      unawaited(connectLan());
+    // Auto-reconnect any saved LAN endpoints on startup
+    for (final session in List<WasteDeviceSession>.from(_devices.values)) {
+      if (session.lanHost.isNotEmpty && session.allowLan) {
+        unawaited(connectLan(deviceId: session.deviceId));
+      }
     }
   }
 
-  Future<void> _recordTelemetry(WasteTelemetry t) async {
-    _latestTelemetry = t;
-    if (_targetDeviceId.isEmpty && t.deviceId.isNotEmpty) {
-      _targetDeviceId = t.deviceId;
-    }
-    _history.add(t);
-    if (_history.length > maxHistoryEntries) {
-      _history.removeRange(0, _history.length - maxHistoryEntries);
-    }
-    notifyListeners();
+  Future<void> _recordTelemetry(
+    WasteTelemetry t, {
+    String? deviceId,
+  }) async {
+    final targetId = (t.deviceId.isNotEmpty ? t.deviceId : (deviceId ?? _activeDeviceId));
+    WasteDeviceSession session;
 
-    final prefs = await SharedPreferences.getInstance();
-    final encoded = _history.map((e) => jsonEncode(e.toJson())).toList();
-    await prefs.setStringList(_prefsHistoryKey, encoded);
+    if (_devices.length == 1 &&
+        _isUntouchedPlaceholder(_devices[defaultPlaceholderDeviceId]) &&
+        targetId != defaultPlaceholderDeviceId) {
+      session = _bindOrMigrateSession(
+        _devices[defaultPlaceholderDeviceId]!,
+        targetId,
+      );
+      await _persistRegistry();
+    } else {
+      session = _ensureDevice(targetId);
+    }
+
+    session.addTelemetry(t);
+    notifyListeners();
+    await _persistDeviceHistory(session);
   }
 
-  Future<void> clearHistory() async {
-    _history.clear();
+  Future<void> clearHistory({String? deviceId}) async {
+    final session = _targetSession(deviceId);
+    session.history.clear();
     notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_prefsHistoryKey);
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_historyKeyFor(session.deviceId));
+    } catch (_) {}
   }
 
   // -------------------- Priority 1: Local LAN HTTP Transport --------------------
 
-  Future<bool> connectLan({String? host, int? port}) async {
+  ({String host, int? port}) _sanitizeHost(String raw) {
+    var cleaned = raw.trim();
+    cleaned =
+        cleaned.replaceFirst(RegExp(r'^https?://', caseSensitive: false), '');
+    final slashIdx = cleaned.indexOf('/');
+    if (slashIdx != -1) {
+      cleaned = cleaned.substring(0, slashIdx);
+    }
+    int? parsedPort;
+    final colonIdx = cleaned.lastIndexOf(':');
+    if (colonIdx > 0 && colonIdx < cleaned.length - 1) {
+      final maybePort = int.tryParse(cleaned.substring(colonIdx + 1));
+      if (maybePort != null && maybePort > 0 && maybePort <= 65535) {
+        cleaned = cleaned.substring(0, colonIdx);
+        parsedPort = maybePort;
+      }
+    }
+    return (host: cleaned, port: parsedPort);
+  }
+
+  Future<bool> connectLan({
+    String? host,
+    int? port,
+    String? deviceId,
+  }) async {
+    var session = _targetSession(deviceId);
+    final explicitDeviceTarget = deviceId != null;
+
     if (host != null) {
-      var cleaned = host.trim();
-      cleaned = cleaned.replaceFirst(
-          RegExp(r'^https?://', caseSensitive: false), '');
-      final slashIdx = cleaned.indexOf('/');
-      if (slashIdx != -1) {
-        cleaned = cleaned.substring(0, slashIdx);
-      }
-      final colonIdx = cleaned.lastIndexOf(':');
-      if (colonIdx > 0 && colonIdx < cleaned.length - 1) {
-        final maybePort = int.tryParse(cleaned.substring(colonIdx + 1));
-        if (maybePort != null && maybePort > 0 && maybePort <= 65535) {
-          cleaned = cleaned.substring(0, colonIdx);
-          port ??= maybePort;
-        }
-      }
-      if (cleaned.isNotEmpty) {
-        _lanHost = cleaned;
+      final sanitized = _sanitizeHost(host);
+      port ??= sanitized.port;
+      if (sanitized.host.isNotEmpty) {
+        session.lanHost = sanitized.host;
       }
     }
     if (port != null && port > 0 && port <= 65535) {
-      _lanPort = port;
+      session.lanPort = port;
     }
 
-    if (_lanHost.isEmpty) {
+    if (session.lanHost.isEmpty) {
       _statusMessage = 'LAN Error: Host IP/hostname cannot be empty';
       notifyListeners();
       return false;
     }
 
-    _lanConnecting = true;
-    _statusMessage = 'Connecting LAN (http://$_lanHost:$_lanPort)...';
+    session.lanConnecting = true;
+    _statusMessage =
+        'Connecting LAN (http://${session.lanHost}:${session.lanPort})...';
     notifyListeners();
+    await _persistRegistry();
+
+    final hostSnapshot = session.lanHost;
+    final portSnapshot = session.lanPort;
 
     try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString(_prefsLanHostKey, _lanHost);
-      await prefs.setInt(_prefsLanPortKey, _lanPort);
-    } catch (_) {}
-
-    try {
-      final uri = Uri.parse('http://$_lanHost:$_lanPort/api/status');
+      final uri = Uri.parse('http://$hostSnapshot:$portSnapshot/api/status');
       final resp = await http.get(uri).timeout(const Duration(seconds: 4));
       if (resp.statusCode == 200) {
-        _lanConnected = true;
+        String reportedIp = '';
+        String reportedId = '';
         try {
           final decoded = jsonDecode(resp.body);
           if (decoded is Map<String, dynamic>) {
-            final devId = decoded['device_id'] as String?;
-            if (devId != null && devId.isNotEmpty && _targetDeviceId.isEmpty) {
-              _targetDeviceId = devId;
-            }
-            final ip = decoded['ip'] as String?;
-            if (ip != null && ip.isNotEmpty) {
-              _lanDeviceIp = ip;
-            }
+            reportedId = (decoded['device_id'] as String?)?.trim() ?? '';
+            reportedIp = (decoded['ip'] as String?)?.trim() ?? '';
           }
         } catch (_) {}
 
+        if (reportedId.isNotEmpty && reportedId != session.deviceId) {
+          final resolvedSession = _bindOrMigrateSession(
+            session,
+            reportedId,
+            selectIfActiveChanged: !explicitDeviceTarget,
+          );
+          if (resolvedSession != session) {
+            session.lanConnecting = false;
+            resolvedSession.lanHost = hostSnapshot;
+            resolvedSession.lanPort = portSnapshot;
+            session = resolvedSession;
+          }
+        }
+
+        if (reportedIp.isNotEmpty) {
+          session.lanDeviceIp = reportedIp;
+        }
+        session.lanConnected = true;
+
         final parsed = WasteTelemetry.tryParse(resp.body);
         if (parsed != null) {
-          await _recordTelemetry(parsed);
+          await _recordTelemetry(parsed, deviceId: session.deviceId);
         }
-        _statusMessage = 'LAN Connected (http://$_lanHost:$_lanPort)';
-        _startLanPolling();
+        await _persistRegistry();
+
+        _statusMessage =
+            '${session.displayName}: LAN Connected (http://$hostSnapshot:$portSnapshot)';
+        _startLanPolling(session);
         return true;
       } else {
-        _lanConnected = false;
+        session.lanConnected = false;
         _statusMessage = 'LAN Error: HTTP ${resp.statusCode}';
         return false;
       }
     } catch (e) {
-      _lanConnected = false;
+      session.lanConnected = false;
       _statusMessage = 'LAN Connection Failed: $e';
       return false;
     } finally {
-      _lanConnecting = false;
+      session.lanConnecting = false;
       notifyListeners();
     }
   }
 
   /// Probes mDNS .local hostnames (e.g. smartbin_s3_XXXXXX.local) for port 80.
-  Future<bool> probeMdnsLan({int port = 80}) async {
+  Future<bool> probeMdnsLan({int port = 80, String? deviceId}) async {
+    final session = _targetSession(deviceId);
     final candidates = <String>[
-      if (activeDeviceId.isNotEmpty) '$activeDeviceId.local',
-      if (_lanHost.isNotEmpty && _lanHost != '$activeDeviceId.local') _lanHost,
-      if (activeDeviceId != 'smartbin_s3') 'smartbin_s3.local',
+      if (session.deviceId.isNotEmpty) '${session.deviceId}.local',
+      if (session.lanHost.isNotEmpty &&
+          session.lanHost != '${session.deviceId}.local')
+        session.lanHost,
+      if (session.deviceId != defaultPlaceholderDeviceId)
+        '$defaultPlaceholderDeviceId.local',
     ];
     for (final candidate in candidates.toSet()) {
-      final ok = await connectLan(host: candidate, port: port);
+      final ok = await connectLan(
+        host: candidate,
+        port: port,
+        deviceId: deviceId,
+      );
       if (ok) return true;
     }
     return false;
   }
 
-  void _startLanPolling() {
-    _lanPollTimer?.cancel();
-    _lanPollTimer = Timer.periodic(const Duration(seconds: 4), (_) async {
-      if (!_lanConnected || _lanHost.isEmpty) {
-        _lanPollTimer?.cancel();
+  void _startLanPolling(WasteDeviceSession session) {
+    session.cancelLanTimer();
+    session.lanPollTimer = Timer.periodic(const Duration(seconds: 4), (_) async {
+      if (!session.lanConnected || session.lanHost.isEmpty) {
+        session.cancelLanTimer();
         return;
       }
       try {
-        final uri = Uri.parse('http://$_lanHost:$_lanPort/api/status');
+        final uri =
+            Uri.parse('http://${session.lanHost}:${session.lanPort}/api/status');
         final resp = await http.get(uri).timeout(const Duration(seconds: 3));
         if (resp.statusCode == 200) {
           final parsed = WasteTelemetry.tryParse(resp.body);
           if (parsed != null) {
-            _recordTelemetry(parsed);
+            await _recordTelemetry(parsed, deviceId: session.deviceId);
           }
         } else {
-          _lanConnected = false;
+          session.lanConnected = false;
           notifyListeners();
         }
       } catch (_) {
-        _lanConnected = false;
+        session.lanConnected = false;
         notifyListeners();
       }
     });
   }
 
-  void disconnectLan() {
-    _lanPollTimer?.cancel();
-    _lanPollTimer = null;
-    _lanConnected = false;
+  void disconnectLan({String? deviceId}) {
+    final session = _targetSession(deviceId);
+    session.cancelLanTimer();
+    session.lanConnected = false;
     _statusMessage = _mqttConnected
-        ? 'MQTT Connected'
-        : (_bleConnected ? 'BLE Connected' : 'LAN Disconnected');
+        ? '${session.displayName}: MQTT Active'
+        : (session.bleConnected
+            ? '${session.displayName}: BLE Active'
+            : '${session.displayName}: LAN Disconnected');
     notifyListeners();
   }
 
-  // -------------------- Priority 2: Cloud MQTT Transport --------------------
+  // -------------------- Priority 2: Shared Cloud MQTT Transport --------------------
 
   Future<void> connectMqtt({String? brokerUri, String? deviceId}) async {
     if (brokerUri != null && brokerUri.trim().isNotEmpty) {
       _mqttBrokerUri = brokerUri.trim();
     }
     if (deviceId != null) {
-      _targetDeviceId = deviceId.trim();
+      _mqttDeviceFilter = deviceId.trim();
+      if (_mqttDeviceFilter.isNotEmpty &&
+          _mqttDeviceFilter != defaultPlaceholderDeviceId) {
+        await registerDevice(
+          deviceId: _mqttDeviceFilter,
+          makeActive: _isUntouchedPlaceholder(
+              _devices[defaultPlaceholderDeviceId]),
+        );
+      }
     }
 
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_prefsBrokerKey, _mqttBrokerUri);
-    await prefs.setString(_prefsDeviceIdKey, _targetDeviceId);
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_prefsBrokerKey, _mqttBrokerUri);
+      await prefs.setString(_prefsMqttFilterKey, _mqttDeviceFilter);
+    } catch (_) {}
 
     disconnectMqtt();
 
@@ -392,9 +655,10 @@ class WasteConnectionService extends ChangeNotifier {
 
     client.onDisconnected = () {
       _mqttConnected = false;
-      _statusMessage = _lanConnected
+      final active = activeDevice;
+      _statusMessage = active.lanConnected
           ? 'LAN Active'
-          : (_bleConnected ? 'BLE Failover Active' : 'MQTT Disconnected');
+          : (active.bleConnected ? 'BLE Failover Active' : 'MQTT Disconnected');
       notifyListeners();
     };
 
@@ -409,7 +673,8 @@ class WasteConnectionService extends ChangeNotifier {
 
     try {
       await client.connect(username, password);
-      client.updates?.listen(_onMqttMessage);
+      await _mqttUpdatesSub?.cancel();
+      _mqttUpdatesSub = client.updates?.listen(_onMqttMessage);
     } catch (e) {
       _mqttConnected = false;
       _statusMessage = 'MQTT Error: $e';
@@ -421,10 +686,19 @@ class WasteConnectionService extends ChangeNotifier {
   void _subscribeMqttTopics() {
     final c = _mqttClient;
     if (c == null || !_mqttConnected) return;
-    final filter = _targetDeviceId.isNotEmpty ? _targetDeviceId : '+';
+    final filter =
+        _mqttDeviceFilter.isNotEmpty ? _mqttDeviceFilter : '+';
     c.subscribe('smartbin/$filter/telemetry', MqttQos.atLeastOnce);
     c.subscribe('smartbin/$filter/alert', MqttQos.atLeastOnce);
     c.subscribe('smartbin/$filter/status', MqttQos.atLeastOnce);
+  }
+
+  String _extractDeviceIdFromTopic(String topic) {
+    final parts = topic.split('/');
+    if (parts.length >= 3 && parts[0] == 'smartbin') {
+      return parts[1].trim();
+    }
+    return '';
   }
 
   void _onMqttMessage(List<MqttReceivedMessage<MqttMessage?>>? events) {
@@ -435,28 +709,43 @@ class WasteConnectionService extends ChangeNotifier {
       final payload =
           MqttPublishPayload.bytesToStringAsString(pubMsg.payload.message);
       final topic = rec.topic;
+      final topicDeviceId = _extractDeviceIdFromTopic(topic);
 
       if (topic.endsWith('/telemetry')) {
         final t = WasteTelemetry.tryParse(payload);
         if (t != null) {
-          _nodeOnlineLwt = true;
-          _recordTelemetry(t);
+          final id = t.deviceId.isNotEmpty ? t.deviceId : topicDeviceId;
+          final session = _devices.length == 1 &&
+                  _isUntouchedPlaceholder(_devices[defaultPlaceholderDeviceId]) &&
+                  id.isNotEmpty
+              ? _bindOrMigrateSession(
+                  _devices[defaultPlaceholderDeviceId]!, id)
+              : _ensureDevice(id);
+          session.nodeOnlineLwt = true;
+          unawaited(_recordTelemetry(t, deviceId: session.deviceId));
         }
-      } else if (topic.endsWith('/status')) {
-        _nodeOnlineLwt = payload.trim() == 'online';
+      } else if (topic.endsWith('/status') && topicDeviceId.isNotEmpty) {
+        final session = _devices.length == 1 &&
+                _isUntouchedPlaceholder(_devices[defaultPlaceholderDeviceId])
+            ? _bindOrMigrateSession(
+                _devices[defaultPlaceholderDeviceId]!, topicDeviceId)
+            : _ensureDevice(topicDeviceId);
+        session.nodeOnlineLwt = payload.trim() == 'online';
         notifyListeners();
       }
     }
   }
 
   void disconnectMqtt() {
+    unawaited(_mqttUpdatesSub?.cancel());
+    _mqttUpdatesSub = null;
     _mqttClient?.disconnect();
     _mqttClient = null;
     _mqttConnected = false;
     notifyListeners();
   }
 
-  // -------------------- Priority 3: BLE GATT Transport (0xFF00 - 0xFF07) --------------------
+  // -------------------- Priority 3: Per-Device BLE GATT Transport (0xFF00 - 0xFF07) --------------------
 
   bool _matchesUuid16(Guid guid, String hex4) {
     final s = guid.toString().toLowerCase();
@@ -464,26 +753,43 @@ class WasteConnectionService extends ChangeNotifier {
         s.startsWith('0000${hex4.toLowerCase()}-0000-1000-8000');
   }
 
-  Future<bool> connectBleDevice(BluetoothDevice device) async {
-    await disconnectBle();
+  Future<bool> connectBleDevice(
+    BluetoothDevice device, {
+    String? deviceId,
+  }) async {
+    final platformName = device.platformName.trim();
+    final inferredId = (deviceId != null && deviceId.trim().isNotEmpty)
+        ? deviceId.trim()
+        : (platformName.toLowerCase().contains('smartbin')
+            ? platformName
+            : _activeDeviceId);
+
+    final session = _devices.length == 1 &&
+            _isUntouchedPlaceholder(_devices[defaultPlaceholderDeviceId]) &&
+            inferredId != defaultPlaceholderDeviceId
+        ? _bindOrMigrateSession(
+            _devices[defaultPlaceholderDeviceId]!, inferredId)
+        : _ensureDevice(inferredId);
+
+    await disconnectBle(deviceId: session.deviceId);
     _statusMessage = 'Connecting BLE to ${device.platformName}...';
     notifyListeners();
 
     try {
       await device.connect(timeout: const Duration(seconds: 10));
-      _bleDevice = device;
+      session.bleDevice = device;
 
       try {
         await device.requestMtu(247);
       } catch (_) {}
 
-      _bleConnSub = device.connectionState.listen((state) {
+      session.bleConnSub = device.connectionState.listen((state) {
         if (state == BluetoothConnectionState.disconnected) {
-          _bleConnected = false;
-          _statusMessage = _lanConnected
-              ? 'LAN Active'
+          session.bleConnected = false;
+          _statusMessage = session.lanConnected
+              ? '${session.displayName}: LAN Active'
               : (_mqttConnected
-                  ? 'MQTT Connected'
+                  ? '${session.displayName}: MQTT Connected'
                   : 'BLE Disconnected from ${device.platformName}');
           notifyListeners();
         }
@@ -493,56 +799,67 @@ class WasteConnectionService extends ChangeNotifier {
       for (final svc in services) {
         if (_matchesUuid16(svc.uuid, 'ff00')) {
           for (final chr in svc.characteristics) {
-            if (_matchesUuid16(chr.uuid, 'ff01')) _chrSsid = chr;
-            if (_matchesUuid16(chr.uuid, 'ff02')) _chrPass = chr;
-            if (_matchesUuid16(chr.uuid, 'ff03')) _chrMqtt = chr;
-            if (_matchesUuid16(chr.uuid, 'ff04')) _chrApply = chr;
-            if (_matchesUuid16(chr.uuid, 'ff05')) _chrTelem = chr;
-            if (_matchesUuid16(chr.uuid, 'ff06')) _chrCmd = chr;
-            if (_matchesUuid16(chr.uuid, 'ff07')) _chrUpload = chr;
+            if (_matchesUuid16(chr.uuid, 'ff01')) session.chrSsid = chr;
+            if (_matchesUuid16(chr.uuid, 'ff02')) session.chrPass = chr;
+            if (_matchesUuid16(chr.uuid, 'ff03')) session.chrMqtt = chr;
+            if (_matchesUuid16(chr.uuid, 'ff04')) session.chrApply = chr;
+            if (_matchesUuid16(chr.uuid, 'ff05')) session.chrTelem = chr;
+            if (_matchesUuid16(chr.uuid, 'ff06')) session.chrCmd = chr;
+            if (_matchesUuid16(chr.uuid, 'ff07')) session.chrUpload = chr;
           }
         }
       }
 
-      if (_chrTelem != null) {
-        final initialBytes = await _chrTelem!.read();
+      if (session.chrTelem != null) {
+        final initialBytes = await session.chrTelem!.read();
         final initialStr = utf8.decode(initialBytes, allowMalformed: true);
         final t = WasteTelemetry.tryParse(initialStr);
         if (t != null) {
-          await _recordTelemetry(t);
+          await _recordTelemetry(t, deviceId: session.deviceId);
         }
 
-        await _chrTelem!.setNotifyValue(true);
-        _bleTelemSub = _chrTelem!.onValueReceived.listen((bytes) {
+        await session.chrTelem!.setNotifyValue(true);
+        session.bleTelemSub = session.chrTelem!.onValueReceived.listen((bytes) {
           final jsonStr = utf8.decode(bytes, allowMalformed: true);
           final parsed = WasteTelemetry.tryParse(jsonStr);
           if (parsed != null) {
-            _recordTelemetry(parsed);
+            unawaited(_recordTelemetry(parsed, deviceId: session.deviceId));
           }
         });
       }
 
-      _bleConnected = true;
+      session.bleConnected = true;
+      _activeDeviceId = session.deviceId;
+      await _persistRegistry();
       _statusMessage = 'BLE Connected (${device.platformName})';
       notifyListeners();
       return true;
     } catch (e) {
-      _bleConnected = false;
+      session.bleConnected = false;
       _statusMessage = 'BLE Connection Failed: $e';
       notifyListeners();
       return false;
     }
   }
 
-  Future<Map<String, String>> readBleProvisioningConfig() async {
+  Future<Map<String, String>> readBleProvisioningConfig({
+    String? deviceId,
+  }) async {
+    final session = _targetSession(deviceId);
     String ssid = '';
     String mqtt = _mqttBrokerUri;
     try {
-      if (_chrSsid != null) {
-        ssid = utf8.decode(await _chrSsid!.read(), allowMalformed: true);
+      if (session.chrSsid != null) {
+        ssid = utf8.decode(
+          await session.chrSsid!.read(),
+          allowMalformed: true,
+        );
       }
-      if (_chrMqtt != null) {
-        final m = utf8.decode(await _chrMqtt!.read(), allowMalformed: true);
+      if (session.chrMqtt != null) {
+        final m = utf8.decode(
+          await session.chrMqtt!.read(),
+          allowMalformed: true,
+        );
         if (m.isNotEmpty) mqtt = m;
       }
     } catch (_) {}
@@ -553,22 +870,28 @@ class WasteConnectionService extends ChangeNotifier {
     required String wifiSsid,
     required String wifiPass,
     required String mqttUri,
+    String? deviceId,
   }) async {
-    if (!_bleConnected) return false;
+    final session = _targetSession(deviceId);
+    if (!session.bleConnected) return false;
     try {
-      if (_chrSsid != null) {
-        await _chrSsid!.write(utf8.encode(wifiSsid), withoutResponse: false);
+      if (session.chrSsid != null) {
+        await session.chrSsid!
+            .write(utf8.encode(wifiSsid), withoutResponse: false);
       }
-      if (_chrPass != null && wifiPass.isNotEmpty) {
-        await _chrPass!.write(utf8.encode(wifiPass), withoutResponse: false);
+      if (session.chrPass != null && wifiPass.isNotEmpty) {
+        await session.chrPass!
+            .write(utf8.encode(wifiPass), withoutResponse: false);
       }
-      if (_chrMqtt != null && mqttUri.isNotEmpty) {
-        await _chrMqtt!.write(utf8.encode(mqttUri), withoutResponse: false);
+      if (session.chrMqtt != null && mqttUri.isNotEmpty) {
+        await session.chrMqtt!
+            .write(utf8.encode(mqttUri), withoutResponse: false);
       }
-      if (_chrApply != null) {
-        await _chrApply!.write([0x01], withoutResponse: false);
+      if (session.chrApply != null) {
+        await session.chrApply!.write([0x01], withoutResponse: false);
       }
-      _statusMessage = 'Provisioned Wi-Fi & MQTT to NVS via BLE!';
+      _statusMessage =
+          'Provisioned ${session.displayName} Wi-Fi & MQTT via BLE!';
       notifyListeners();
       return true;
     } catch (e) {
@@ -578,98 +901,81 @@ class WasteConnectionService extends ChangeNotifier {
     }
   }
 
-  Future<void> disconnectBle() async {
-    await _bleTelemSub?.cancel();
-    _bleTelemSub = null;
-    await _bleConnSub?.cancel();
-    _bleConnSub = null;
-    try {
-      await _bleDevice?.disconnect();
-    } catch (_) {}
-    _bleDevice = null;
-    _chrSsid = null;
-    _chrPass = null;
-    _chrMqtt = null;
-    _chrApply = null;
-    _chrTelem = null;
-    _chrCmd = null;
-    _chrUpload = null;
-    _bleConnected = false;
+  Future<void> disconnectBle({String? deviceId}) async {
+    final session = _targetSession(deviceId);
+    await session.closeBleResources();
     notifyListeners();
   }
 
   // -------------------- Tri-Mode Unified Command Routing --------------------
 
-  bool get _allowLan =>
-      _preferredTransport == TransportPreference.auto ||
-      _preferredTransport == TransportPreference.lan;
-
-  bool get _allowMqtt =>
-      _preferredTransport == TransportPreference.auto ||
-      _preferredTransport == TransportPreference.mqtt;
-
-  bool get _allowBle =>
-      _preferredTransport == TransportPreference.auto ||
-      _preferredTransport == TransportPreference.ble;
-
   /// Sends a command dictionary honoring Tri-Mode priority and user selection:
   /// Priority 1 (LAN HTTP) -> Priority 2 (Cloud MQTT) -> Priority 3 (Direct BLE)
-  Future<bool> sendCommandMap(Map<String, dynamic> cmdPayload) async {
+  Future<bool> sendCommandMap(
+    Map<String, dynamic> cmdPayload, {
+    String? deviceId,
+  }) async {
+    final session = _targetSession(deviceId);
     final rawJson = jsonEncode(cmdPayload);
     final cmdName = cmdPayload['cmd'] ?? cmdPayload['action'] ?? 'cmd';
 
     // 1. Priority 1: Local LAN HTTP REST
-    if (_allowLan && _lanConnected && _lanHost.isNotEmpty) {
+    if (session.allowLan &&
+        session.lanConnected &&
+        session.lanHost.isNotEmpty) {
       try {
         Uri uri;
         String? body;
+        final base = 'http://${session.lanHost}:${session.lanPort}';
         if (cmdName == 'open_lid' || cmdPayload['action'] == 'open') {
-          uri = Uri.parse('http://$_lanHost:$_lanPort/api/lid');
+          uri = Uri.parse('$base/api/lid');
           body = jsonEncode({
             'action': 'open',
             'hold_s': cmdPayload['hold_s'] ?? 5,
           });
         } else if (cmdName == 'measure_now') {
-          uri = Uri.parse('http://$_lanHost:$_lanPort/api/measure');
+          uri = Uri.parse('$base/api/measure');
           body = jsonEncode({});
         } else if (cmdName == 'configure') {
-          uri = Uri.parse('http://$_lanHost:$_lanPort/api/config');
+          uri = Uri.parse('$base/api/config');
           body = rawJson;
         } else if (cmdName == 'reset_anim') {
-          uri = Uri.parse('http://$_lanHost:$_lanPort/api/oled/reset');
+          uri = Uri.parse('$base/api/oled/reset');
           body = jsonEncode({});
         } else {
-          uri = Uri.parse('http://$_lanHost:$_lanPort/api/cmd');
+          uri = Uri.parse('$base/api/cmd');
           body = rawJson;
         }
 
-        final resp = await http.post(
-          uri,
-          headers: {'Content-Type': 'application/json'},
-          body: body,
-        ).timeout(const Duration(seconds: 4));
+        final resp = await http
+            .post(
+              uri,
+              headers: {'Content-Type': 'application/json'},
+              body: body,
+            )
+            .timeout(const Duration(seconds: 4));
 
         if (resp.statusCode == 200) {
-          _statusMessage = 'Sent "$cmdName" via Local LAN';
+          _statusMessage = 'Sent "$cmdName" to ${session.displayName} via LAN';
           final parsed = WasteTelemetry.tryParse(resp.body);
           if (parsed != null) {
-            await _recordTelemetry(parsed);
+            await _recordTelemetry(parsed, deviceId: session.deviceId);
           }
           notifyListeners();
           return true;
         }
       } catch (_) {
         // LAN failed; fall through to Priority 2 (MQTT) if Auto
-        _lanConnected = false;
+        session.lanConnected = false;
       }
     }
 
     // 2. Priority 2: Cloud MQTT
-    if (_allowMqtt && _mqttConnected && _mqttClient != null) {
+    if (session.allowMqtt && _mqttConnected && _mqttClient != null) {
       try {
         final builder = MqttClientPayloadBuilder();
         builder.addUTF8String(rawJson);
-        final topic = 'smartbin/$activeDeviceId/cmd';
+        final topic = 'smartbin/${session.deviceId}/cmd';
         _mqttClient!.publishMessage(topic, MqttQos.atLeastOnce, builder.payload!);
         _statusMessage = 'Sent "$cmdName" via MQTT ($topic)';
         notifyListeners();
@@ -680,10 +986,12 @@ class WasteConnectionService extends ChangeNotifier {
     }
 
     // 3. Priority 3: Direct BLE GATT 0xFF06
-    if (_allowBle && _bleConnected && _chrCmd != null) {
+    if (session.allowBle && session.bleConnected && session.chrCmd != null) {
       try {
-        await _chrCmd!.write(utf8.encode(rawJson), withoutResponse: false);
-        _statusMessage = 'Sent "$cmdName" via BLE (0xFF06)';
+        await session.chrCmd!
+            .write(utf8.encode(rawJson), withoutResponse: false);
+        _statusMessage =
+            'Sent "$cmdName" to ${session.displayName} via BLE (0xFF06)';
         notifyListeners();
         return true;
       } catch (e) {
@@ -697,14 +1005,17 @@ class WasteConnectionService extends ChangeNotifier {
     return false;
   }
 
-  Future<bool> triggerMeasureNow() =>
-      sendCommandMap({'cmd': 'measure_now'});
+  Future<bool> triggerMeasureNow({String? deviceId}) =>
+      sendCommandMap({'cmd': 'measure_now'}, deviceId: deviceId);
 
-  Future<bool> triggerOpenLid({int holdSeconds = 5}) =>
-      sendCommandMap({'cmd': 'open_lid', 'hold_s': holdSeconds});
+  Future<bool> triggerOpenLid({int holdSeconds = 5, String? deviceId}) =>
+      sendCommandMap(
+        {'cmd': 'open_lid', 'hold_s': holdSeconds},
+        deviceId: deviceId,
+      );
 
-  Future<bool> updateBinConfig(WasteBinConfig cfg) =>
-      sendCommandMap(cfg.toCommandJson());
+  Future<bool> updateBinConfig(WasteBinConfig cfg, {String? deviceId}) =>
+      sendCommandMap(cfg.toCommandJson(), deviceId: deviceId);
 
   // -------------------- Custom OLED Animation Upload & Reset --------------------
 
@@ -713,6 +1024,7 @@ class WasteConnectionService extends ChangeNotifier {
   Future<bool> uploadCustomAnimation(
     Uint8List wbinBytes, {
     void Function(double progress)? onProgress,
+    String? deviceId,
   }) async {
     if (wbinBytes.isEmpty) {
       _statusMessage = 'Animation payload is empty';
@@ -720,13 +1032,19 @@ class WasteConnectionService extends ChangeNotifier {
       return false;
     }
 
+    final session = _targetSession(deviceId);
+
     // Priority 1: Local LAN HTTP Upload
-    if (_allowLan && _lanConnected && _lanHost.isNotEmpty) {
+    if (session.allowLan &&
+        session.lanConnected &&
+        session.lanHost.isNotEmpty) {
       try {
-        _statusMessage = 'Uploading ${wbinBytes.length} bytes via LAN HTTP...';
+        _statusMessage =
+            'Uploading ${wbinBytes.length} bytes to ${session.displayName} via LAN...';
         notifyListeners();
 
-        final uri = Uri.parse('http://$_lanHost:$_lanPort/api/oled/upload');
+        final uri = Uri.parse(
+            'http://${session.lanHost}:${session.lanPort}/api/oled/upload');
         final request = http.StreamedRequest('POST', uri);
         request.headers['Content-Type'] = 'application/octet-stream';
         request.contentLength = wbinBytes.length;
@@ -746,7 +1064,8 @@ class WasteConnectionService extends ChangeNotifier {
           final res = await responseFuture.timeout(const Duration(seconds: 15));
           if (res.statusCode == 200) {
             onProgress?.call(1.0);
-            _statusMessage = 'Successfully uploaded custom animation via LAN!';
+            _statusMessage =
+                'Uploaded custom animation to ${session.displayName} via LAN!';
             notifyListeners();
             return true;
           } else {
@@ -759,15 +1078,18 @@ class WasteConnectionService extends ChangeNotifier {
         }
       } catch (e) {
         _statusMessage = 'LAN Upload Error: $e';
-        _lanConnected = false;
+        session.lanConnected = false;
         notifyListeners();
       }
     }
 
     // Priority 3: BLE GATT Characteristic 0xFF07 Chunked Upload
-    if (_allowBle && _bleConnected && _chrUpload != null) {
+    if (session.allowBle &&
+        session.bleConnected &&
+        session.chrUpload != null) {
       try {
-        _statusMessage = 'Uploading ${wbinBytes.length} bytes via BLE 0xFF07...';
+        _statusMessage =
+            'Uploading ${wbinBytes.length} bytes to ${session.displayName} via BLE 0xFF07...';
         notifyListeners();
 
         const int chunkSize = 244;
@@ -775,14 +1097,15 @@ class WasteConnectionService extends ChangeNotifier {
         for (int i = 0; i < wbinBytes.length; i += chunkSize) {
           final end = math.min(i + chunkSize, wbinBytes.length);
           final chunk = wbinBytes.sublist(i, end);
-          await _chrUpload!.write(chunk, withoutResponse: true);
+          await session.chrUpload!.write(chunk, withoutResponse: true);
           sent += (end - i);
           onProgress?.call(sent / wbinBytes.length);
           await Future.delayed(const Duration(milliseconds: 15));
         }
 
         onProgress?.call(1.0);
-        _statusMessage = 'Successfully uploaded custom animation via BLE!';
+        _statusMessage =
+            'Uploaded custom animation to ${session.displayName} via BLE!';
         notifyListeners();
         return true;
       } catch (e) {
@@ -792,40 +1115,50 @@ class WasteConnectionService extends ChangeNotifier {
       }
     }
 
-    _statusMessage = 'Upload unavailable: Neither LAN nor BLE transport active';
+    _statusMessage =
+        'Upload unavailable: Neither LAN nor BLE transport active';
     notifyListeners();
     return false;
   }
 
   /// Resets the active OLED animation back to the compiled Dancing Cat mascot.
-  Future<bool> resetCustomAnimation() async {
+  Future<bool> resetCustomAnimation({String? deviceId}) async {
+    final session = _targetSession(deviceId);
+
     // Priority 1: LAN HTTP POST /api/oled/reset
-    if (_allowLan && _lanConnected && _lanHost.isNotEmpty) {
+    if (session.allowLan &&
+        session.lanConnected &&
+        session.lanHost.isNotEmpty) {
       try {
-        final uri = Uri.parse('http://$_lanHost:$_lanPort/api/oled/reset');
-        final resp = await http.post(
-          uri,
-          headers: {'Content-Type': 'application/json'},
-          body: jsonEncode({}),
-        ).timeout(const Duration(seconds: 4));
+        final uri = Uri.parse(
+            'http://${session.lanHost}:${session.lanPort}/api/oled/reset');
+        final resp = await http
+            .post(
+              uri,
+              headers: {'Content-Type': 'application/json'},
+              body: jsonEncode({}),
+            )
+            .timeout(const Duration(seconds: 4));
         if (resp.statusCode == 200) {
           _statusMessage = 'Reset animation to Mascot via LAN';
           notifyListeners();
           return true;
         }
       } catch (_) {
-        _lanConnected = false;
+        session.lanConnected = false;
       }
     }
 
     // Priority 2: MQTT reset_anim
-    if (_allowMqtt && _mqttConnected && _mqttClient != null) {
-      return sendCommandMap({'cmd': 'reset_anim'});
+    if (session.allowMqtt && _mqttConnected && _mqttClient != null) {
+      return sendCommandMap({'cmd': 'reset_anim'}, deviceId: session.deviceId);
     }
 
     // Priority 3: BLE GATT reset_anim
-    if (_allowBle && _bleConnected && _chrCmd != null) {
-      return sendCommandMap({'cmd': 'reset_anim'});
+    if (session.allowBle &&
+        session.bleConnected &&
+        session.chrCmd != null) {
+      return sendCommandMap({'cmd': 'reset_anim'}, deviceId: session.deviceId);
     }
 
     _statusMessage = 'Cannot reset animation: Disconnected';
@@ -840,16 +1173,39 @@ class WasteConnectionService extends ChangeNotifier {
     bool? lan,
     bool? mqtt,
     bool? ble,
+    bool? nodeOnlineLwt,
     String? lanHost,
     int? lanPort,
     TransportPreference? preferredTransport,
+    String? deviceId,
+    WasteTelemetry? latestTelemetry,
   }) {
-    if (lan != null) _lanConnected = lan;
+    final session = _targetSession(deviceId);
+    if (lan != null) session.lanConnected = lan;
     if (mqtt != null) _mqttConnected = mqtt;
-    if (ble != null) _bleConnected = ble;
-    if (lanHost != null) _lanHost = lanHost;
-    if (lanPort != null) _lanPort = lanPort;
-    if (preferredTransport != null) _preferredTransport = preferredTransport;
+    if (ble != null) session.bleConnected = ble;
+    if (nodeOnlineLwt != null) session.nodeOnlineLwt = nodeOnlineLwt;
+    if (lanHost != null) session.lanHost = lanHost;
+    if (lanPort != null) session.lanPort = lanPort;
+    if (preferredTransport != null) {
+      session.preferredTransport = preferredTransport;
+    }
+    if (latestTelemetry != null) {
+      session.addTelemetry(latestTelemetry);
+    }
     notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    for (final session in _devices.values) {
+      session.cancelLanTimer();
+      unawaited(session.closeBleResources());
+    }
+    unawaited(_mqttUpdatesSub?.cancel());
+    _mqttUpdatesSub = null;
+    _mqttClient?.disconnect();
+    _mqttClient = null;
+    super.dispose();
   }
 }
