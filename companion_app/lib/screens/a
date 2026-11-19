@@ -1,0 +1,96 @@
+import 'package:flutter/material.dart';
+
+void main() => runApp(const MaterialApp(home: HomeScreen()));
+
+// 1. Reusable BottomNavigationBar Widget
+class CustomBottomNav extends StatelessWidget {
+  final int currentIndex;
+
+  const CustomBottomNav({super.key, required this.currentIndex});
+
+  void _onItemTapped(BuildContext context, int index) {
+    // Do nothing if the user taps the already active tab
+    if (index == currentIndex) return;
+
+    // Map each index to its full Scaffold screen
+    Widget nextScreen;
+    switch (index) {
+      case 0:
+        nextScreen = const HomeScreen();
+        break;
+      case 1:
+        nextScreen = const SearchScreen();
+        break;
+      case 2:
+        nextScreen = const ProfileScreen();
+        break;
+      default:
+        return;
+    }
+
+    // Replace the entire current screen without slide animation
+    Navigator.pushReplacement(
+      context,
+      PageRouteBuilder(
+        pageBuilder: (_, __, ___) => nextScreen,
+        transitionDuration: Duration.zero,
+        reverseTransitionDuration: Duration.zero,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return BottomNavigationBar(
+      currentIndex: currentIndex,
+      onTap: (index) => _onItemTapped(context, index),
+      selectedItemColor: Colors.blueAccent,
+      unselectedItemColor: Colors.grey,
+      items: const [
+        BottomNavigationBarItem(icon: Icon(Icons.home), label: 'Home'),
+        BottomNavigationBarItem(icon: Icon(Icons.search), label: 'Search'),
+        BottomNavigationBarItem(icon: Icon(Icons.person), label: 'Profile'),
+      ],
+    );
+  }
+}
+
+// 2. Separate Full Screens (Each has its own Scaffold & AppBar)
+class HomeScreen extends StatelessWidget {
+  const HomeScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Home'), backgroundColor: Colors.blue),
+      body: const Center(child: Text('Full Home Screen')),
+      bottomNavigationBar: const CustomBottomNav(currentIndex: 0),
+    );
+  }
+}
+
+class SearchScreen extends StatelessWidget {
+  const SearchScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Search'), backgroundColor: Colors.green),
+      body: const Center(child: Text('Full Search Screen')),
+      bottomNavigationBar: const CustomBottomNav(currentIndex: 1),
+    );
+  }
+}
+
+class ProfileScreen extends StatelessWidget {
+  const ProfileScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Profile'), backgroundColor: Colors.orange),
+      body: const Center(child: Text('Full Profile Screen')),
+      bottomNavigationBar: const CustomBottomNav(currentIndex: 2),
+    );
+  }
+}
