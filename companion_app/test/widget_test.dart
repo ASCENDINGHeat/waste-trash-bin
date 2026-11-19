@@ -5,7 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:waste_companion/main.dart';
 import 'package:waste_companion/models/telemetry.dart';
-import 'package:waste_companion/screens/animation_upload_sheet.dart';
+import 'package:waste_companion/sheets/animation_upload_sheet.dart';
 import 'package:waste_companion/services/waste_connection_service.dart';
 import 'package:waste_companion/services/wbin_encoder.dart';
 

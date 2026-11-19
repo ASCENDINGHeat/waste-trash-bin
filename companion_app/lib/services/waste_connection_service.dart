@@ -51,8 +51,9 @@ class WasteConnectionService extends ChangeNotifier {
   // -------------------- Device Registry Helpers --------------------
 
   WasteDeviceSession _ensureDevice(String deviceId) {
-    final normalized =
-        deviceId.trim().isNotEmpty ? deviceId.trim() : defaultPlaceholderDeviceId;
+    final normalized = deviceId.trim().isNotEmpty
+        ? deviceId.trim()
+        : defaultPlaceholderDeviceId;
     return _devices.putIfAbsent(
       normalized,
       () => WasteDeviceSession(deviceId: normalized),
@@ -146,8 +147,7 @@ class WasteConnectionService extends ChangeNotifier {
   bool get isNodeOnline => activeDevice.isOnline();
   String get statusMessage => _statusMessage;
   WasteTelemetry? get latestTelemetry => activeDevice.latestTelemetry;
-  List<WasteTelemetry> get history =>
-      List.unmodifiable(activeDevice.history);
+  List<WasteTelemetry> get history => List.unmodifiable(activeDevice.history);
 
   /// Tri-Mode Transport Priority Resolver for the active device:
   /// Auto: Priority 1 (Local LAN) -> Priority 2 (Cloud MQTT) -> Priority 3 (Direct BLE)
@@ -155,6 +155,14 @@ class WasteConnectionService extends ChangeNotifier {
   TransportMode get transportMode =>
       activeDevice.resolveTransportMode(mqttBrokerConnected: _mqttConnected);
 
+  /// UI Purpose
+  int get totalEmptyBin => _devices.values
+      .where((d) => d.isOnline() && !(d.latestTelemetry?.fullAlert ?? false))
+      .length;
+  int get totalFullBin => _devices.values
+      .where((d) => d.isOnline() && (d.latestTelemetry?.fullAlert ?? false))
+      .length;
+  int get totalOffBin => _devices.values.where((d) => !d.isOnline()).length;
   // -------------------- Multi-Device Lifecycle & Persistence --------------------
 
   Future<void> _persistRegistry() async {
@@ -307,12 +315,14 @@ class WasteConnectionService extends ChangeNotifier {
             WasteDeviceSession(deviceId: defaultPlaceholderDeviceId);
       }
       final savedActive = prefs.getString(_prefsActiveDeviceKey);
-      _activeDeviceId = (savedActive != null && _devices.containsKey(savedActive))
-          ? savedActive
-          : _devices.keys.first;
+      _activeDeviceId =
+          (savedActive != null && _devices.containsKey(savedActive))
+              ? savedActive
+              : _devices.keys.first;
 
       for (final session in _devices.values) {
-        final histRaw = prefs.getStringList(_historyKeyFor(session.deviceId)) ?? [];
+        final histRaw =
+            prefs.getStringList(_historyKeyFor(session.deviceId)) ?? [];
         session.history.clear();
         for (final item in histRaw) {
           final parsed = WasteTelemetry.tryParse(item);
@@ -377,7 +387,8 @@ class WasteConnectionService extends ChangeNotifier {
     WasteTelemetry t, {
     String? deviceId,
   }) async {
-    final targetId = (t.deviceId.isNotEmpty ? t.deviceId : (deviceId ?? _activeDeviceId));
+    final targetId =
+        (t.deviceId.isNotEmpty ? t.deviceId : (deviceId ?? _activeDeviceId));
     WasteDeviceSession session;
 
     if (_devices.length == 1 &&
@@ -545,14 +556,15 @@ class WasteConnectionService extends ChangeNotifier {
 
   void _startLanPolling(WasteDeviceSession session) {
     session.cancelLanTimer();
-    session.lanPollTimer = Timer.periodic(const Duration(seconds: 4), (_) async {
+    session.lanPollTimer =
+        Timer.periodic(const Duration(seconds: 4), (_) async {
       if (!session.lanConnected || session.lanHost.isEmpty) {
         session.cancelLanTimer();
         return;
       }
       try {
-        final uri =
-            Uri.parse('http://${session.lanHost}:${session.lanPort}/api/status');
+        final uri = Uri.parse(
+            'http://${session.lanHost}:${session.lanPort}/api/status');
         final resp = await http.get(uri).timeout(const Duration(seconds: 3));
         if (resp.statusCode == 200) {
           final parsed = WasteTelemetry.tryParse(resp.body);
@@ -594,8 +606,8 @@ class WasteConnectionService extends ChangeNotifier {
           _mqttDeviceFilter != defaultPlaceholderDeviceId) {
         await registerDevice(
           deviceId: _mqttDeviceFilter,
-          makeActive: _isUntouchedPlaceholder(
-              _devices[defaultPlaceholderDeviceId]),
+          makeActive:
+              _isUntouchedPlaceholder(_devices[defaultPlaceholderDeviceId]),
         );
       }
     }
@@ -686,8 +698,7 @@ class WasteConnectionService extends ChangeNotifier {
   void _subscribeMqttTopics() {
     final c = _mqttClient;
     if (c == null || !_mqttConnected) return;
-    final filter =
-        _mqttDeviceFilter.isNotEmpty ? _mqttDeviceFilter : '+';
+    final filter = _mqttDeviceFilter.isNotEmpty ? _mqttDeviceFilter : '+';
     c.subscribe('smartbin/$filter/telemetry', MqttQos.atLeastOnce);
     c.subscribe('smartbin/$filter/alert', MqttQos.atLeastOnce);
     c.subscribe('smartbin/$filter/status', MqttQos.atLeastOnce);
@@ -716,10 +727,10 @@ class WasteConnectionService extends ChangeNotifier {
         if (t != null) {
           final id = t.deviceId.isNotEmpty ? t.deviceId : topicDeviceId;
           final session = _devices.length == 1 &&
-                  _isUntouchedPlaceholder(_devices[defaultPlaceholderDeviceId]) &&
+                  _isUntouchedPlaceholder(
+                      _devices[defaultPlaceholderDeviceId]) &&
                   id.isNotEmpty
-              ? _bindOrMigrateSession(
-                  _devices[defaultPlaceholderDeviceId]!, id)
+              ? _bindOrMigrateSession(_devices[defaultPlaceholderDeviceId]!, id)
               : _ensureDevice(id);
           session.nodeOnlineLwt = true;
           unawaited(_recordTelemetry(t, deviceId: session.deviceId));
@@ -976,7 +987,8 @@ class WasteConnectionService extends ChangeNotifier {
         final builder = MqttClientPayloadBuilder();
         builder.addUTF8String(rawJson);
         final topic = 'smartbin/${session.deviceId}/cmd';
-        _mqttClient!.publishMessage(topic, MqttQos.atLeastOnce, builder.payload!);
+        _mqttClient!
+            .publishMessage(topic, MqttQos.atLeastOnce, builder.payload!);
         _statusMessage = 'Sent "$cmdName" via MQTT ($topic)';
         notifyListeners();
         return true;
@@ -1084,9 +1096,7 @@ class WasteConnectionService extends ChangeNotifier {
     }
 
     // Priority 3: BLE GATT Characteristic 0xFF07 Chunked Upload
-    if (session.allowBle &&
-        session.bleConnected &&
-        session.chrUpload != null) {
+    if (session.allowBle && session.bleConnected && session.chrUpload != null) {
       try {
         _statusMessage =
             'Uploading ${wbinBytes.length} bytes to ${session.displayName} via BLE 0xFF07...';
@@ -1115,8 +1125,7 @@ class WasteConnectionService extends ChangeNotifier {
       }
     }
 
-    _statusMessage =
-        'Upload unavailable: Neither LAN nor BLE transport active';
+    _statusMessage = 'Upload unavailable: Neither LAN nor BLE transport active';
     notifyListeners();
     return false;
   }
@@ -1155,9 +1164,7 @@ class WasteConnectionService extends ChangeNotifier {
     }
 
     // Priority 3: BLE GATT reset_anim
-    if (session.allowBle &&
-        session.bleConnected &&
-        session.chrCmd != null) {
+    if (session.allowBle && session.bleConnected && session.chrCmd != null) {
       return sendCommandMap({'cmd': 'reset_anim'}, deviceId: session.deviceId);
     }
 
